@@ -38,6 +38,52 @@ async function main() {
       console.log(`[we-need-ds] 关闭失败：${r.reason}`);
       process.exit(1);
     }
+  } else if (command === 'doctor') {
+    console.log('[we-need-ds] 开始深度体检...\n');
+
+    const running = await state.isProxyRunning(config.port);
+    console.log(`1. 代理守护进程 (端口 ${config.port}): ${running ? '✅ 正常运行中' : '⚠️ 未运行 (会在使用时自动拉起)'}`);
+
+    const hasCc = require('fs').existsSync(state.PROVIDERS_PATH);
+    console.log(`2. 运行环境模式: ${hasCc ? '✅ cc-haha 环境 (已检测到 providers.json)' : 'ℹ️ 纯正 Claude Code 环境 (环境变量/直连模式)'}`);
+
+    let upstreamUrl = config.targetBaseUrl;
+    if (hasCc) {
+      try {
+        const data = JSON.parse(require('fs').readFileSync(state.PROVIDERS_PATH, 'utf8'));
+        const active = (data.providers || []).find(p => p.id === data.activeId);
+        if (active) {
+          const st = state.readState();
+          upstreamUrl = st.enabled && st.originalUrl ? st.originalUrl : active.baseUrl;
+          console.log(`3. 激活 Provider: ✅ ID ${active.id} (格式: ${active.apiFormat || 'openai_chat'})`);
+          console.log(`   原始上游地址: ${upstreamUrl}`);
+        }
+      } catch (e) {
+        console.log(`3. providers.json 读取异常: ${e.message}`);
+      }
+    }
+
+    if (upstreamUrl && upstreamUrl !== 'auto' && upstreamUrl !== 'env/default') {
+      try {
+        const u = new URL(upstreamUrl);
+        const probePort = u.port || (u.protocol === 'https:' ? 443 : 80);
+        const reachable = await new Promise((resolve) => {
+          const s = require('net').createConnection(probePort, u.hostname, () => {
+            s.end();
+            resolve(true);
+          });
+          s.on('error', () => resolve(false));
+          s.setTimeout(1000, () => { s.destroy(); resolve(false); });
+        });
+        console.log(`4. 上游网关连通性 (${u.hostname}:${probePort}): ${reachable ? '✅ 通畅' : '❌ 不通 (请确认 9router/中转网关已启动)'}`);
+      } catch (e) {
+        console.log(`4. 上游地址解析异常: ${e.message}`);
+      }
+    }
+
+    console.log(`\n5. 目标模型拦截列表: ${config.targetModels.join(', ')}`);
+    console.log(`6. 首轮诱导核心工具: ${config.bootstrapCoreTools.join(', ')}`);
+    console.log('\n体检完成。');
   } else {
     const running = await state.isProxyRunning(config.port);
     const st = state.readState();
