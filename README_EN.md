@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/badge/Claude%20Code-Plugin%20V2-6366f1?style=flat-square" alt="Claude Code Plugin">
   <img src="https://img.shields.io/badge/Companion-cc--haha-f43f5e?style=flat-square" alt="cc-haha">
   <img src="https://img.shields.io/badge/Target-DeepSeek--V4--Pro-0ea5e9?style=flat-square" alt="DeepSeek V4 Pro">
-  <img src="https://img.shields.io/badge/Zero--Config-Auto--Bootstrap-10b981?style=flat-square" alt="Zero Config">
+  <img src="https://img.shields.io/badge/Multi--Provider-Dynamic%20Routing-10b981?style=flat-square" alt="Multi-Provider">
   <img src="https://img.shields.io/badge/License-MIT-amber?style=flat-square" alt="License MIT">
 </p>
 
@@ -39,14 +39,14 @@ sequenceDiagram
     participant User as Developer
     participant CC as Claude Code / cc-haha
     participant Proxy as we-need-ds Proxy (:20129)
-    participant Router as 9router / Upstream API (:20128)
+    participant Router as 9router / Upstream API / Official Endpoints
 
-    User->>CC: Command: /we-need-ds:run Refactor authentication system
-    Note over CC,Proxy: Session starts: Proxy launches, temporarily swaps endpoint
+    User->>CC: Command: /we-need-ds Refactor authentication system
+    Note over CC,Proxy: Session starts / Command invoked: Proxy ready, multi-provider pool attached
     CC->>Proxy: Turn 1 Request (Carrying 30+ MCP tool schemas)
     
     rect rgb(235, 248, 255)
-    Note over Proxy: Turn 1 Decoupling:<br/>Target model matched → Trims tools to [Bash, Edit, Read, Write]
+    Note over Proxy: Protocol Decoupling:<br/>Target model matched → Trims tools to [Bash, Edit, Read, Write]<br/>Dynamically routes to original upstream based on API Key
     end
     
     Proxy->>Router: Forward minimal request
@@ -65,19 +65,35 @@ sequenceDiagram
 
 ---
 
+## ✨ Key Features
+
+1. **⚡ Multi-Provider Pool & Dynamic Auth Routing**:
+   * Automatically hooks all provider instances in `providers.json` (9Router, BAI, YJS, SenseTime, OpenCode, etc.).
+   * Dynamically resolves and routes incoming requests back to each provider's real upstream URL using API Key / Auth headers. Switching providers across tabs works seamlessly.
+2. **🎯 One-shot Force Trigger**:
+   * When switching to DeepSeek Pro mid-session in a long conversation, invoking `/we-need-ds <task>` or `/we-need-ds:on` arms a **one-shot trigger**.
+   * Only the immediate current turn is trimmed to 4 tools to force deep reasoning; the trigger is consumed immediately, and all subsequent turns enjoy 100% unrestricted tool access.
+3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
+   * **Auto Hook on Start**: SessionStart hook initializes background proxy.
+   * **Auto Restore on Exit**: SessionEnd hook restores all provider URLs.
+   * **30-Min Idle Self-Destruct**: After 30 minutes of inactivity, the proxy daemon restores all provider URLs and exits cleanly.
+   * **100% Zero-Touch for Non-Target Models**: Claude, GPT, Gemini, Qwen models pass through with pure byte-level streaming.
+
+---
+
 ## 🚀 Getting Started
 
 ### 🅰️ Using with [cc-haha](https://github.com/NanmiCoder/cc-haha) (Zero Config)
 
-[cc-haha](https://github.com/NanmiCoder/cc-haha) is a widely popular enhanced Claude Code client with multi-provider routing.
-
 1. **Zero configuration required**: Keep your provider `baseUrl` pointing to your normal 9router / API port (e.g., `http://localhost:20128`).
-2. **Automatic Lifecycle**:
-   * The plugin automatically swaps `providers.json` active provider's `baseUrl` to `127.0.0.1:20129` during session runtime.
-   * Upon session exit or 30-minute idle shutdown, it automatically restores the original URL.
+2. **Multi-window flexibility**: The plugin manages all providers concurrently.
 3. **Usage**:
+   ```bash
+   /we-need-ds Build a complete unit test suite for the payment service
    ```
-   /we-need-ds:run Build a complete unit test suite for the payment service
+   Or for pure architecture planning without modifying code:
+   ```bash
+   /we-need-ds:plan Plan large scale refactoring
    ```
 
 ---
@@ -95,15 +111,15 @@ sequenceDiagram
 
 ## 🎮 Command Matrix
 
-| Slash Command | Description | Typical Use Case |
+| Skill Command | Description | Typical Use Case |
 | :--- | :--- | :--- |
-| **`/we-need-ds:run <task>`** | **Run with full-power reasoning** | Primary entry point: activates interception and executes task |
-| **`/we-need-ds:plan <task>`** | **Read-only planning agent** | Summons `we-need-planner` to survey and generate Markdown blueprint |
-| **`/we-need-ds:doctor`** | **Health diagnostic** | Checks port, 9router reachability, provider configuration |
-| **`/we-need-ds:test`** | **Run test simulation suite** | Runs 9 assertions verifying normalization and tool trimming |
-| **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, upstream URL, and log location |
-| **`/we-need-ds:on`** | **Force enable interception** | Manually points active provider to proxy port |
-| **`/we-need-ds:off`** | **Force disable interception** | Manually restores original baseUrl |
+| **`/we-need-ds <task>`** | **Execute with full-power reasoning** | Primary entry point: arms one-shot trigger and runs task |
+| **`/we-need-ds:plan <task>`** | **Read-only planning agent** | Summons `we-need-planner` to generate Markdown blueprint |
+| **`/we-need-ds:doctor`** | **Health diagnostic** | Inspects proxy port, environment mode, 25-provider pool status |
+| **`/we-need-ds:test`** | **Run test simulation suite** | 10 unit test cases verifying tool trimming, mid-session arming, and passthrough |
+| **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, interception switch, hooked providers, and logs |
+| **`/we-need-ds:on`** | **Force enable & arm next turn** | Hooks all providers and arms next question for deep reasoning |
+| **`/we-need-ds:off`** | **Force disable & restore** | Restores all providers to their original upstream URLs |
 
 ---
 
@@ -127,11 +143,6 @@ sequenceDiagram
   "idleAutoShutdownMinutes": 30
 }
 ```
-
-* `targetBaseUrl`: Defaults to `"auto"` to seamlessly track the active provider's upstream.
-* `targetModels`: List of targeted models (fuzzy normalized regex matcher).
-* `bootstrapCoreTools`: Minimal toolset exposed during Turn-1 (default: `Bash, Edit, Read, Write`).
-* `idleAutoShutdownMinutes`: Auto shutdown idle timeout in minutes (default 30 mins, automatically restores config before exit).
 
 ---
 
