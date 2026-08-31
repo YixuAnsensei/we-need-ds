@@ -1,5 +1,6 @@
 ---
 description: 默认主入口：以 We need 满血思维链运行任务
+argument-hint: 你的具体开发/重构/分析任务
 ---
 
 请用 Bash 执行控制脚本开启拦截环境：

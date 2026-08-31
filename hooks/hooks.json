@@ -1,4 +1,26 @@
 {
-  "description": "we-need-ds: 按需手动触发，无会话自动拦截",
-  "hooks": {}
+  "description": "we-need-ds: 会话启动自动拉起代理并安全接管，会话结束自动安全还原",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.js\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/hooks/session-end.js\""
+          }
+        ]
+      }
+    ]
+  }
 }
