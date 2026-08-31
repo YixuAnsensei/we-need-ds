@@ -4,8 +4,13 @@ const state = require('./lib/state.js');
 
 const config = state.loadConfig();
 
+function isSelfProxyUrl(url) {
+  if (!url) return false;
+  return url.includes(`:${config.port}`) || url.includes('127.0.0.1:20129') || url.includes('localhost:20129');
+}
+
 function resolveTargetBaseUrl(req) {
-  if (config.targetBaseUrl && config.targetBaseUrl !== 'auto') {
+  if (config.targetBaseUrl && config.targetBaseUrl !== 'auto' && !isSelfProxyUrl(config.targetBaseUrl)) {
     return config.targetBaseUrl;
   }
 
@@ -13,15 +18,15 @@ function resolveTargetBaseUrl(req) {
   let token = authHeader.replace(/^Bearer\s+/i, '').trim();
 
   const st = state.readState();
-  if (token && st && st.keyMap && st.keyMap[token]) {
+  if (token && st && st.keyMap && st.keyMap[token] && !isSelfProxyUrl(st.keyMap[token])) {
     return st.keyMap[token];
   }
 
-  if (st && st.defaultUpstream && st.defaultUpstream !== 'env/default') {
+  if (st && st.defaultUpstream && st.defaultUpstream !== 'env/default' && !isSelfProxyUrl(st.defaultUpstream)) {
     return st.defaultUpstream;
   }
 
-  if (process.env.ANTHROPIC_UPSTREAM_BASE_URL) {
+  if (process.env.ANTHROPIC_UPSTREAM_BASE_URL && !isSelfProxyUrl(process.env.ANTHROPIC_UPSTREAM_BASE_URL)) {
     return process.env.ANTHROPIC_UPSTREAM_BASE_URL;
   }
 
@@ -60,8 +65,9 @@ function isDeepSeekProModel(modelName) {
   const hasDeepSeek = normalized.includes('deepseek') || normalized.includes('ds');
   const hasV4 = normalized.includes('v4') || normalized.includes('4pro');
   const hasPro = normalized.includes('pro');
+  const hasFlash = normalized.includes('flash');
 
-  return hasDeepSeek && (hasV4 || hasPro);
+  return hasDeepSeek && (hasV4 || hasPro || hasFlash);
 }
 
 function shouldFilterTools(body, customState = null) {
