@@ -51,6 +51,13 @@ function normalizeModelName(name) {
   return name.toLowerCase().replace(/[-_\s/]/g, '');
 }
 
+function findLastIndex(arr, pred) {
+  for (let i = arr.length - 1; i >= 0; i--) {
+    if (pred(arr[i])) return i;
+  }
+  return -1;
+}
+
 function isDeepSeekProModel(modelName) {
   if (!modelName) return false;
   const raw = modelName.toLowerCase();
@@ -79,7 +86,19 @@ function shouldFilterTools(body, customState = null) {
   const lastMsg = body.messages[body.messages.length - 1];
 
   if (st && st.forceNextTurn) {
-    if (lastMsg && lastMsg.role === 'user') {
+    const isUserTurn = lastMsg && lastMsg.role === 'user';
+    const isToolFollowup = lastMsg && lastMsg.role === 'tool';
+    if (isUserTurn || isToolFollowup) {
+      if (isToolFollowup) {
+        const toolIdx = findLastIndex(body.messages, m => m.role === 'tool');
+        const prev = toolIdx > 0 ? body.messages[toolIdx - 1] : null;
+        const prevHadCall = prev && prev.role === 'assistant' && Array.isArray(prev.tool_calls) &&
+          prev.tool_calls.some(tc => {
+            const n = (tc.function && tc.function.name) || tc.name || '';
+            return String(n).includes('we-need-ds') || /ctl\.js/.test(JSON.stringify(tc.function && tc.function.arguments || ''));
+          });
+        if (!prevHadCall) return false;
+      }
       if (!customState) {
         state.consumeForceNextTurn();
       }
