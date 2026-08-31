@@ -4,27 +4,27 @@ const state = require('./lib/state.js');
 
 const config = state.loadConfig();
 
-function resolveTargetBaseUrl() {
+function resolveTargetBaseUrl(req) {
   if (config.targetBaseUrl && config.targetBaseUrl !== 'auto') {
     return config.targetBaseUrl;
   }
+
+  const authHeader = (req && req.headers && (req.headers['authorization'] || req.headers['x-api-key'])) || '';
+  let token = authHeader.replace(/^Bearer\s+/i, '').trim();
+
   const st = state.readState();
-  if (st && st.originalUrl && st.originalUrl !== 'env/default') {
-    return st.originalUrl;
+  if (token && st && st.keyMap && st.keyMap[token]) {
+    return st.keyMap[token];
   }
+
+  if (st && st.defaultUpstream && st.defaultUpstream !== 'env/default') {
+    return st.defaultUpstream;
+  }
+
   if (process.env.ANTHROPIC_UPSTREAM_BASE_URL) {
     return process.env.ANTHROPIC_UPSTREAM_BASE_URL;
   }
-  try {
-    if (state.PROVIDERS_PATH && require('fs').existsSync(state.PROVIDERS_PATH)) {
-      const providersData = JSON.parse(require('fs').readFileSync(state.PROVIDERS_PATH, 'utf8'));
-      const activeId = providersData.activeId;
-      const activeProvider = (providersData.providers || []).find(p => p.id === activeId);
-      if (activeProvider && activeProvider.baseUrl && !activeProvider.baseUrl.includes(`:${config.port}`)) {
-        return activeProvider.baseUrl;
-      }
-    }
-  } catch (e) {}
+
   return 'http://127.0.0.1:20128';
 }
 
@@ -35,7 +35,7 @@ setInterval(() => {
     const idleMs = Date.now() - lastActiveTime;
     if (idleMs > config.idleAutoShutdownMinutes * 60 * 1000) {
       const r = state.disableInterception(config);
-      state.log(`daemon idle exit; baseUrl restored: ${r.restored || 'n/a'}`);
+      state.log(`daemon idle exit; baseUrl restored`);
       process.exit(0);
     }
   }
@@ -104,7 +104,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  const upstreamBase = resolveTargetBaseUrl();
+  const upstreamBase = resolveTargetBaseUrl(req);
   const targetUrl = new URL(req.url, upstreamBase);
   const isHttps = targetUrl.protocol === 'https:';
   const transport = isHttps ? https : http;
@@ -119,9 +119,9 @@ const server = http.createServer((req, res) => {
       const before = rawBody;
       outgoingBody = processRequestBody(rawBody);
       if (outgoingBody !== before) {
-        state.log(`tools filtered: ${req.url}`);
+        state.log(`tools filtered: ${req.url} -> upstream: ${upstreamBase}`);
       } else if (config.logDetails) {
-        state.log(`passthrough: ${req.url}`);
+        state.log(`passthrough: ${req.url} -> upstream: ${upstreamBase}`);
       }
     }
 
@@ -146,7 +146,7 @@ const server = http.createServer((req, res) => {
     proxyReq.on('error', (err) => {
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: `we-need-ds 代理异常: ${err.message}` } }));
+        res.end(JSON.stringify({ error: { message: `we-need-ds 代理异常 (上游 ${upstreamBase}): ${err.message}` } }));
       }
     });
 
@@ -159,8 +159,8 @@ const server = http.createServer((req, res) => {
 
 if (require.main === module) {
   server.listen(config.port, '127.0.0.1', () => {
-    state.log(`daemon listening on :${config.port}, upstream=${resolveTargetBaseUrl()}`);
+    state.log(`daemon listening on :${config.port}`);
   });
 }
 
-module.exports = { shouldFilterTools, processRequestBody, config };
+module.exports = { shouldFilterTools, processRequestBody, resolveTargetBaseUrl, config };
