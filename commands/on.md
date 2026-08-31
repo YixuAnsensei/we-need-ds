@@ -1,7 +1,7 @@
 ---
-description: 开启 we-need-ds 拦截（启动守护进程并临时切换 baseUrl）
+description: 手动开启 we-need-ds 拦截环境
 ---
 
-请用 Bash 执行：
+用 Bash 执行：
 
-node "${CLAUDE_PLUGIN_ROOT}/commands/ctl.js" on
+node "${CLAUDE_PLUGIN_ROOT}/lib/ctl.js" on
