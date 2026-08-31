@@ -1,5 +1,5 @@
 ---
-name: we-need-planner
+name: ds-planner
 description: DeepSeek Pro 深度规划器。当主对话使用 deepseek-v4-pro 系列模型且面临复杂任务需要先规划再执行时主动使用。以极简工具环境诱导 "We need" 满血思维链，产出结构化执行计划后交回主对话执行。
 tools: Read, Glob, Grep
 model: inherit
