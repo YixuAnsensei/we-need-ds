@@ -123,10 +123,19 @@ sequenceDiagram
     "Read",
     "Write"
   ],
+  "bootstrapBudget": 0,
+  "enforceEnglishReasoning": true,
   "logDetails": false,
   "idleAutoShutdownMinutes": 30
 }
 ```
+
+* `targetBaseUrl`: Defaults to `"auto"` to seamlessly track the active provider's upstream.
+* `targetModels`: List of targeted models (fuzzy normalized regex matcher).
+* `bootstrapCoreTools`: Minimal toolset exposed during Turn-1 (default: `Bash, Edit, Read, Write`).
+* `bootstrapBudget`: **Turn-1 reasoning token budget (default `0` = disabled)**. If set to a number (e.g. `2048`), temporarily limits `max_tokens` on turn 1 to enforce concise, high-density strategic planning without verbose hallucinations.
+* `enforceEnglishReasoning`: **Reasoning language anchor (default `true`)**. Anchors the internal `<think>` reasoning chain to English "We need..." to tap into DeepSeek's deepest RL code/architecture pre-training, while the final output strictly adheres to the user's requested language.
+* `idleAutoShutdownMinutes`: Auto shutdown idle timeout in minutes (default 30 mins, automatically restores config before exit).
 
 ---
 

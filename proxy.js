@@ -80,12 +80,42 @@ function processRequestBody(rawBody) {
     const body = JSON.parse(rawBody);
 
     if (shouldFilterTools(body)) {
+      let modified = false;
+
       if (Array.isArray(body.tools) && body.tools.length > 0) {
-        const coreSet = new Set(config.bootstrapCoreTools.map(t => t.toLowerCase()));
+        const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
         body.tools = body.tools.filter(t => {
           const name = (t.function && t.function.name) || t.name || '';
           return coreSet.has(name.toLowerCase());
         });
+        modified = true;
+      }
+
+      if (config.bootstrapBudget && config.bootstrapBudget > 0) {
+        if (body.max_tokens) body.max_tokens = config.bootstrapBudget;
+        if (body.max_completion_tokens) body.max_completion_tokens = config.bootstrapBudget;
+        modified = true;
+      }
+
+      if (config.enforceEnglishReasoning) {
+        const ANCHOR = "\n\n[Instruction]: You MUST reason and think in structured English starting with 'We need...' to deeply analyze the architecture, then reply in the user's required language.";
+        if (typeof body.system === 'string') {
+          if (!body.system.includes("We need")) {
+            body.system += ANCHOR;
+            modified = true;
+          }
+        } else if (Array.isArray(body.messages) && body.messages.length > 0) {
+          const sysMsg = body.messages.find(m => m.role === 'system');
+          if (sysMsg && typeof sysMsg.content === 'string') {
+            if (!sysMsg.content.includes("We need")) {
+              sysMsg.content += ANCHOR;
+              modified = true;
+            }
+          }
+        }
+      }
+
+      if (modified) {
         return JSON.stringify(body);
       }
     }
