@@ -23,6 +23,18 @@ const cases = [
     expectFiltered: true
   },
   {
+    name: 'DS Flash 首轮 deepseek-v4-flash (预期裁切至 4)',
+    body: { model: 'deepseek-v4-flash', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
+    expectFiltered: true
+  },
+  {
+    name: 'DS Flash-0731 首轮 deepseek-v4-flash-0731 (预期裁切至 4)',
+    body: { model: 'deepseek-v4-flash-0731', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
+    expectFiltered: true
+  },
+  {
     name: 'DS Pro 下划线变体 deepseek_v4_pro (预期裁切至 4)',
     body: { model: 'deepseek_v4_pro', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
     customState: null,
