@@ -64,10 +64,22 @@ function isDeepSeekProModel(modelName) {
   return hasDeepSeek && (hasV4 || hasPro);
 }
 
-function shouldFilterTools(body) {
+function shouldFilterTools(body, customState = null) {
   if (!body || !body.model) return false;
   if (!isDeepSeekProModel(body.model)) return false;
   if (!Array.isArray(body.messages) || body.messages.length === 0) return false;
+
+  const st = customState || state.readState();
+  const lastMsg = body.messages[body.messages.length - 1];
+
+  if (st && st.forceNextTurn) {
+    if (lastMsg && lastMsg.role === 'user') {
+      if (!customState) {
+        state.consumeForceNextTurn();
+      }
+      return true;
+    }
+  }
 
   const userMessages = body.messages.filter(m => m.role === 'user');
   const hasToolCalls = body.messages.some(m => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls));
@@ -75,11 +87,11 @@ function shouldFilterTools(body) {
   return (userMessages.length <= 1) && !hasToolCalls;
 }
 
-function processRequestBody(rawBody) {
+function processRequestBody(rawBody, customState = null) {
   try {
     const body = JSON.parse(rawBody);
 
-    if (shouldFilterTools(body)) {
+    if (shouldFilterTools(body, customState)) {
       if (Array.isArray(body.tools) && body.tools.length > 0) {
         const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
         body.tools = body.tools.filter(t => {

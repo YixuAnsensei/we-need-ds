@@ -19,26 +19,31 @@ const cases = [
   {
     name: 'DS Pro 首轮标准名 (预期裁切至 4)',
     body: { model: 'deepseek-v4-pro-0813', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: true
   },
   {
     name: 'DS Pro 下划线变体 deepseek_v4_pro (预期裁切至 4)',
     body: { model: 'deepseek_v4_pro', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: true
   },
   {
     name: 'DS Pro 空格变体 "DeepSeek V4 Pro" (预期裁切至 4)',
     body: { model: 'DeepSeek V4 Pro', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: true
   },
   {
     name: 'DS Pro 无分隔符 deepseekv4pro (预期裁切至 4)',
     body: { model: 'deepseekv4pro', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: true
   },
   {
     name: 'DS Pro 路径前缀 models/deepseek-ai/deepseek-v4-pro (预期裁切至 4)',
     body: { model: 'models/deepseek-ai/deepseek-v4-pro', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: true
   },
   {
@@ -52,28 +57,54 @@ const cases = [
       ],
       tools: allTools
     },
+    customState: null,
     expectFiltered: false
   },
   {
     name: '非目标模型 Gemini (预期透传 8)',
     body: { model: 'Gemini-3.7-flash-ag', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: false
   },
   {
     name: '非目标模型 Claude (预期透传 8)',
     body: { model: 'claude-3-7-sonnet', messages: [{ role: 'user', content: 'hello' }], tools: allTools },
+    customState: null,
     expectFiltered: false
   },
   {
-    name: '目标模型但两条 user 消息 (预期透传)',
-    body: { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'a' }, { role: 'user', content: 'b' }], tools: allTools },
+    name: '长会话中途 + forceNextTurn 武装信号 (预期强制裁切至 4)',
+    body: {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'round 1' },
+        { role: 'assistant', content: 'reply 1' },
+        { role: 'user', content: 'round 2: start new task now' }
+      ],
+      tools: allTools
+    },
+    customState: { forceNextTurn: true },
+    expectFiltered: true
+  },
+  {
+    name: '长会话中途 + 无武装信号且多轮 (预期透传 8)',
+    body: {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'round 1' },
+        { role: 'assistant', content: 'reply 1' },
+        { role: 'user', content: 'round 2' }
+      ],
+      tools: allTools
+    },
+    customState: { forceNextTurn: false },
     expectFiltered: false
   }
 ];
 
 let failed = 0;
 for (const c of cases) {
-  const out = processRequestBody(JSON.stringify(c.body));
+  const out = processRequestBody(JSON.stringify(c.body), c.customState);
   const filtered = out !== JSON.stringify(c.body);
   const parsed = JSON.parse(out);
   const count = (parsed.tools || []).length;
