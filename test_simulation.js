@@ -68,16 +68,6 @@ const cases = [
     name: '目标模型但两条 user 消息 (预期透传)',
     body: { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'a' }, { role: 'user', content: 'b' }], tools: allTools },
     expectFiltered: false
-  },
-  {
-    name: '英文思考锚点注入验证 (预期首轮注入 We need 指令)',
-    body: {
-      model: 'deepseek-v4-pro',
-      messages: [{ role: 'system', content: 'You are helpful' }, { role: 'user', content: 'help' }],
-      tools: allTools
-    },
-    expectFiltered: true,
-    checkAnchor: true
   }
 ];
 
@@ -88,12 +78,7 @@ for (const c of cases) {
   const parsed = JSON.parse(out);
   const count = (parsed.tools || []).length;
   const expectCount = c.expectFiltered ? 4 : 8;
-  let ok = filtered === c.expectFiltered && count === expectCount;
-
-  if (c.checkAnchor) {
-    const sys = parsed.messages.find(m => m.role === 'system');
-    if (!sys || !sys.content.includes('We need')) ok = false;
-  }
+  const ok = filtered === c.expectFiltered && count === expectCount;
 
   if (!ok) failed++;
   console.log(`${ok ? 'PASS' : 'FAIL'} | ${c.name} | 裁切=${filtered} 剩余工具=${count} (预期 ${expectCount})`);

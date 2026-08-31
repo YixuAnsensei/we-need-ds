@@ -157,7 +157,6 @@ sequenceDiagram
     "Write"
   ],
   "bootstrapBudget": 0,
-  "enforceEnglishReasoning": true,
   "logDetails": false,
   "idleAutoShutdownMinutes": 30
 }
@@ -166,8 +165,7 @@ sequenceDiagram
 * `targetBaseUrl`：默认为 `"auto"`，自动读取当前激活 Provider 的原始上游 URL（跳过 20129 自身防回环）；也可手动配置为任意中转商/9router 地址。
 * `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）。
 * `bootstrapCoreTools`：首轮保留的核心诱导工具集（默认 `Bash, Edit, Read, Write`）。
-* `bootstrapBudget`：**首轮思考预算调节（默认 `0` 为关闭）**。若设为数字（如 `2048`），仅在首轮将 `max_tokens` 限制为该值，逼出最紧凑干练的全局战略蓝图，避免模型首轮过度发散；第二轮起自动恢复客户端全额预算。
-* `enforceEnglishReasoning`：**思维链语言锚定（默认 `true`）**。在首轮微调提示词强制模型以英文 "We need..." 展开思考推理（激活模型在代码与工程领域的最深层先验，彻底避免中英文混杂或纯中文思维链退化），最终回复依然遵循用户所要求的语言（如中文回复）。
+* `bootstrapBudget`：**首轮输出上限调节（默认 `0` 为跟随客户端默认设置）**。详细原理解析见下文。
 * `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动还原配置）。
 
 ---

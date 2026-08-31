@@ -97,24 +97,6 @@ function processRequestBody(rawBody) {
         modified = true;
       }
 
-      if (config.enforceEnglishReasoning) {
-        const ANCHOR = "\n\n[Instruction]: You MUST reason and think in structured English starting with 'We need...' to deeply analyze the architecture, then reply in the user's required language.";
-        if (typeof body.system === 'string') {
-          if (!body.system.includes("We need")) {
-            body.system += ANCHOR;
-            modified = true;
-          }
-        } else if (Array.isArray(body.messages) && body.messages.length > 0) {
-          const sysMsg = body.messages.find(m => m.role === 'system');
-          if (sysMsg && typeof sysMsg.content === 'string') {
-            if (!sysMsg.content.includes("We need")) {
-              sysMsg.content += ANCHOR;
-              modified = true;
-            }
-          }
-        }
-      }
-
       if (modified) {
         return JSON.stringify(body);
       }

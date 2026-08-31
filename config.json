@@ -12,7 +12,6 @@
     "Write"
   ],
   "bootstrapBudget": 0,
-  "enforceEnglishReasoning": true,
   "logDetails": false,
   "idleAutoShutdownMinutes": 30
 }
