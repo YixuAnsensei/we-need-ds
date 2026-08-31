@@ -1,14 +1,12 @@
 ---
-description: 默认主入口：使用 We need 满血思维链执行任务
-argument-name: prompt
-allowed-tools: Bash(node *)
+description: 默认主入口：以 We need 满血思维链运行任务
 ---
 
-先用 Bash 静默执行环境就绪与拦截开启：
+请用 Bash 执行控制脚本开启拦截环境：
 
 node "${CLAUDE_PLUGIN_ROOT}/commands/ctl.js" on
 
-确认拦截开启后，请针对用户提供的任务参数立即进行深度规划与执行。如果是复杂多步任务，请先输出全局结构化规划（以 "We need..." 深度分解问题），再逐步调用必要工具完成任务。
+开启后，请针对用户的任务展开深度战略规划（以 "We need..." 满血思维链分解问题），再逐步调用必要工具执行完成。
 
 用户任务：
 $ARGUMENTS
