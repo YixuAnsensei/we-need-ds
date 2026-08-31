@@ -112,6 +112,30 @@ function shouldFilterTools(body, customState = null) {
   return (userMessages.length <= 1) && !hasToolCalls;
 }
 
+function stripPersonaFromSystem(body) {
+  const cleaned = [];
+  const sysArr = Array.isArray(body.system) ? body.system : (body.system ? [body.system] : []);
+  for (const blk of sysArr) {
+    const text = typeof blk === 'string' ? blk : (blk && blk.text) || '';
+    if (/You are Claude Code|Let me think|think step by step|interactive CLI tool/i.test(text)) continue;
+    cleaned.push(blk);
+  }
+  if (body.system !== undefined) body.system = cleaned;
+
+  if (Array.isArray(body.messages)) {
+    for (const m of body.messages) {
+      if (m.role !== 'system') continue;
+      if (typeof m.content === 'string') {
+        if (/You are Claude Code|Let me think|think step by step|interactive CLI tool/i.test(m.content)) m.content = '';
+      } else if (Array.isArray(m.content)) {
+        m.content = m.content.filter(c => !(c && c.type === 'text' && /You are Claude Code|Let me think|think step by step|interactive CLI tool/i.test(c.text || '')));
+      }
+    }
+    body.messages = body.messages.filter(m => !(m.role === 'system' && (m.content === '' || (Array.isArray(m.content) && m.content.length === 0))));
+  }
+  return body;
+}
+
 function processRequestBody(rawBody, customState = null) {
   try {
     const body = JSON.parse(rawBody);
@@ -123,8 +147,11 @@ function processRequestBody(rawBody, customState = null) {
           const name = (t.function && t.function.name) || t.name || '';
           return coreSet.has(name.toLowerCase());
         });
-        return JSON.stringify(body);
       }
+      if (config.stripSystemPersona !== false) {
+        stripPersonaFromSystem(body);
+      }
+      return JSON.stringify(body);
     }
     return rawBody;
   } catch (err) {
