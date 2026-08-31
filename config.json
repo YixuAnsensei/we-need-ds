@@ -1,0 +1,16 @@
+{
+  "port": 20129,
+  "targetBaseUrl": "auto",
+  "targetModels": [
+    "deepseek-v4-pro-0813",
+    "deepseek-v4-pro"
+  ],
+  "bootstrapCoreTools": [
+    "Bash",
+    "Edit",
+    "Read",
+    "Write"
+  ],
+  "logDetails": false,
+  "idleAutoShutdownMinutes": 30
+}

@@ -1,0 +1,20 @@
+{
+  "name": "we-need-ds",
+  "version": "1.0.0",
+  "description": "Unlock full-power 'We need' reasoning chains for DeepSeek Pro models in Claude Code by dynamically decoupling first-round tool schemas.",
+  "author": {
+    "name": "YixuAn",
+    "url": "https://github.com/YixuAnsensei"
+  },
+  "license": "MIT",
+  "homepage": "https://github.com/YixuAnsensei/we-need-ds",
+  "keywords": [
+    "claude-code",
+    "deepseek",
+    "deepseek-v4-pro",
+    "reasoning",
+    "we-need",
+    "tools-filter",
+    "9router"
+  ]
+}
