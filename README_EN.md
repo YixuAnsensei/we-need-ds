@@ -123,7 +123,6 @@ sequenceDiagram
     "Read",
     "Write"
   ],
-  "bootstrapBudget": 0,
   "logDetails": false,
   "idleAutoShutdownMinutes": 30
 }
@@ -132,7 +131,6 @@ sequenceDiagram
 * `targetBaseUrl`: Defaults to `"auto"` to seamlessly track the active provider's upstream.
 * `targetModels`: List of targeted models (fuzzy normalized regex matcher).
 * `bootstrapCoreTools`: Minimal toolset exposed during Turn-1 (default: `Bash, Edit, Read, Write`).
-* `bootstrapBudget`: **Turn-1 maximum completion tokens limit (default `0` = follow client default)**.
 * `idleAutoShutdownMinutes`: Auto shutdown idle timeout in minutes (default 30 mins, automatically restores config before exit).
 
 ---

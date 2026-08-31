@@ -156,7 +156,6 @@ sequenceDiagram
     "Read",
     "Write"
   ],
-  "bootstrapBudget": 0,
   "logDetails": false,
   "idleAutoShutdownMinutes": 30
 }
@@ -165,7 +164,6 @@ sequenceDiagram
 * `targetBaseUrl`：默认为 `"auto"`，自动读取当前激活 Provider 的原始上游 URL（跳过 20129 自身防回环）；也可手动配置为任意中转商/9router 地址。
 * `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）。
 * `bootstrapCoreTools`：首轮保留的核心诱导工具集（默认 `Bash, Edit, Read, Write`）。
-* `bootstrapBudget`：**首轮输出上限调节（默认 `0` 为跟随客户端默认设置）**。详细原理解析见下文。
 * `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动还原配置）。
 
 ---

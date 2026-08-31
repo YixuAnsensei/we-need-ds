@@ -80,24 +80,12 @@ function processRequestBody(rawBody) {
     const body = JSON.parse(rawBody);
 
     if (shouldFilterTools(body)) {
-      let modified = false;
-
       if (Array.isArray(body.tools) && body.tools.length > 0) {
         const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
         body.tools = body.tools.filter(t => {
           const name = (t.function && t.function.name) || t.name || '';
           return coreSet.has(name.toLowerCase());
         });
-        modified = true;
-      }
-
-      if (config.bootstrapBudget && config.bootstrapBudget > 0) {
-        if (body.max_tokens) body.max_tokens = config.bootstrapBudget;
-        if (body.max_completion_tokens) body.max_completion_tokens = config.bootstrapBudget;
-        modified = true;
-      }
-
-      if (modified) {
         return JSON.stringify(body);
       }
     }
