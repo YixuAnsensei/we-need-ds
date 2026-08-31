@@ -1,13 +1,16 @@
 # we-need-ds 🎯
 
-> **首个专为 Claude Code / cc-haha 打造的 DeepSeek Pro 满血 "We need" 深度思维链原生增强插件**
+> **首个专为 Claude Code 与 [cc-haha](https://github.com/NanmiCoder/cc-haha) 打造的 DeepSeek Pro 满血 "We need" 深度思维链原生增强插件**
 
 <p align="center">
   <img src="https://img.shields.io/badge/Claude%20Code-Plugin%20V2-6366f1?style=flat-square" alt="Claude Code Plugin">
+  <img src="https://img.shields.io/badge/Companion-cc--haha-f43f5e?style=flat-square" alt="cc-haha">
   <img src="https://img.shields.io/badge/Target-DeepSeek--V4--Pro-0ea5e9?style=flat-square" alt="DeepSeek V4 Pro">
   <img src="https://img.shields.io/badge/Zero--Config-Auto--Bootstrap-10b981?style=flat-square" alt="Zero Config">
   <img src="https://img.shields.io/badge/License-MIT-amber?style=flat-square" alt="License MIT">
 </p>
+
+[English Documentation](README_EN.md) | 简体中文
 
 ---
 
@@ -20,8 +23,8 @@
 | 🟢 **"We need..." 满血深度规划** | 面对复杂工程任务，首先自发进行宏观全局拆解、边界推演、架构设计，展现极高水准的 AGI 战略规划能力。 | 模型首轮仅看到基础必要工具，触发 RL（强化学习）训练中的**深度推理甜点区**。 |
 | 🔴 **"Let me..." 浅层工具试探** | 陷入微观琐碎的工具调用纠结，输出频繁试错、不断摸索，思维链退化为机械式的工具调用循环（Tool-Churning）。 | 客户端首轮注入数十个 MCP 工具、技能扩展、复杂 Schema，模型的注意力机制被过度牵引。 |
 
-### 行业现状与空白
-* **DSH 社区验证了原理，但 Claude Code 生态依然缺席**：现有的解决方案大多停留在 Python 脚本或专有 CLI 框架中。
+### 行业现状与生态空白
+* **DSH 社区验证了原理，但 Claude Code 生态依然缺席**：现有的解决方案大多停留在 Python 独立运行脚本或专有终端框架中。
 * **Claude Code 生态的巨大矛盾**：现代开发者在 Claude Code 中普遍挂载了大量 MCP 工具（数据库、浏览器、绘图、终端等）。如果为了诱导 "We need" 而手动把 MCP 全关掉，开发体验直接报废；如果不关，DeepSeek 就会永远陷在 "Let me" 的泥潭里。
 * **提示词（Prompt 催眠）治标不治本**：无论在 System Prompt 里如何强调“请使用 We need 思考”，只要底层的 JSON 请求体里依然带有一长串复杂的 Tool Schemas，模型就会被注意力机制强制牵引回工具试探中。
 
@@ -29,17 +32,17 @@
 
 ## 💡 我们的解决方案：双阶段动态解耦（Two-Phase Bootstrap）
 
-**`we-need-ds`** 是专为 Claude Code / cc-haha 原生设计的全自动增强插件，**无需关闭任何 MCP，零感知唤醒满血 DeepSeek**：
+**`we-need-ds`** 是专为 Claude Code 与 [cc-haha](https://github.com/NanmiCoder/cc-haha) 原生设计的全自动增强插件，**无需关闭任何 MCP，零感知唤醒满血 DeepSeek**：
 
 ```mermaid
 sequenceDiagram
     autonumber
     participant User as 开发者
-    participant CC as Claude Code 宿主
+    participant CC as Claude Code / cc-haha 宿主
     participant Proxy as we-need-ds 代理 (:20129)
     participant Router as 9router / API 服务商 (:20128)
 
-    User->>CC: 输入任务: /we-need-ds 重构登录与鉴权系统
+    User->>CC: 输入任务: /we-need-ds:run 重构登录与鉴权系统
     Note over CC,Proxy: 会话开启：插件自适应启动，临时切入透明代理
     CC->>Proxy: 第 1 轮请求 (包含全部 30+ 个 MCP 工具 Schema)
     
@@ -61,25 +64,69 @@ sequenceDiagram
     Router-->>CC: 正常调用 ComfyUI/数据库/各种 MCP 完成执行！
 ```
 
-### 核心亮点
-1. 🚀 **全自动懒人模式**：会话启动/指令触发时自动拉起后台守护代理并切换端点；会话结束或空闲 30 分钟自动还原端点并退出，不常驻占用内存。
-2. 🛡️ **MCP 零损耗**：仅在首轮“骗”模型建立全局思维链，第二轮起所有 MCP、Skills 全量释放。
-3. 🎯 **精准模型过滤（超强鲁棒性）**：内置正则归一化引擎，仅精准拦截 `deepseek-v4-pro*`（无论下划线、空格、连字符还是路径前缀），Claude、Gemini、GPT、Kimi 等其他模型 **100% 纯净透传，零干预**。
-4. 🌐 **双模自适应**：原生适配 cc-haha（自动管理 `providers.json`）与纯正 Claude Code 官方环境（支持环境变量）。
+---
+
+## 📂 Claude Code 配置文件组织体系
+
+为了让大家清晰了解插件在本地是如何运作的，以下是 Claude Code 与 [cc-haha](https://github.com/NanmiCoder/cc-haha) 的配置目录分布：
+
+```
+~/.claude/                          # Claude Code 用户全局配置根目录
+├── settings.json                   # 官方设置文件 (管理 enabledPlugins, permissions 等)
+├── cc-haha/                        # cc-haha 定制目录 (https://github.com/NanmiCoder/cc-haha)
+│   └── providers.json              # Provider 路由表 (baseUrl, activeId, 模型映射等)
+└── plugins/                        # 插件系统根目录 (Plugin V2 规范)
+    ├── installed_plugins.json      # 已安装插件注册表与 cache 映射
+    ├── known_marketplaces.json     # 插件市场源列表
+    └── cache/                      # 插件运行时隔离沙盒
+        └── claude-plugins-official/
+            └── we-need-ds/1.0.0/   # we-need-ds 运行时代码与状态文件
+                ├── config.json     # 插件核心配置
+                ├── proxy.js        # 拦截代理核心
+                ├── lib/state.js    # 自适应环境状态机
+                └── runtime-state.json # 运行时临时状态 (记录原始 URL，防回环)
+```
 
 ---
 
-## 🛠️ 安装与使用
+## 🚀 两种环境下的使用指南
 
-### 1. 插件安装
-在 Claude Code 中通过官方市场一键安装：
-```bash
-/plugin install we-need-ds@claude-plugins-official
-```
+### 🅰️ 在 [cc-haha](https://github.com/NanmiCoder/cc-haha) 中使用（极致懒人模式）
 
-### 2. 日常使用命令全景
+[cc-haha](https://github.com/NanmiCoder/cc-haha) 是目前社区最流行的 Claude Code 增强客户端，支持多 Provider 管理与模型一键切换。
 
-插件提供了丰富、直观的斜杠命令矩阵：
+1. **零配置开箱即用**：
+   * 你的 9Router / 中转 Provider 的 `baseUrl` **保持原样（如 `http://localhost:20128`）不变，无需手动修改任何设置**！
+2. **自动生命周期管理**：
+   * 插件在检测到 `~/.claude/cc-haha/providers.json` 后，会在每次开启拦截时**自动且安全地将当前激活 Provider 临时切换至 `127.0.0.1:20129`**，并在 `runtime-state.json` 中记下原始地址。
+   * 会话结束、退出客户端或守护进程空闲 30 分钟退出时，**会自动将 `baseUrl` 还原为原地址**，绝不残留脏数据。
+3. **日常使用**：
+   * 在聊天框直接输入：
+     ```
+     /we-need-ds:run 帮我重构用户鉴权模块并编写测试用例
+     ```
+
+---
+
+### 🅱️ 在纯正官方 Claude Code 中使用
+
+对于直接使用官方 CLI 的极客开发者：
+
+1. **设置上游与代理**：
+   * 在环境变量中指定上游中转地址（如 9router 或商业 API）：
+     ```bash
+     export ANTHROPIC_UPSTREAM_BASE_URL="http://127.0.0.1:20128"
+     ```
+   * 将 Claude Code 端点指向 `we-need-ds` 代理：
+     ```bash
+     export ANTHROPIC_BASE_URL="http://127.0.0.1:20129"
+     ```
+2. **运行与体验**：
+   * 正常启动 `claude` 即可，首轮所有 `deepseek-v4-pro*` 请求自动触发 "We need" 思维链，其他模型（Claude / GPT / Gemini 等）全量透传直通。
+
+---
+
+## 🎮 命令矩阵全景
 
 | 斜杠命令 | 功能说明 | 典型使用场景 |
 | :--- | :--- | :--- |
@@ -94,8 +141,6 @@ sequenceDiagram
 ---
 
 ## ⚙️ 配置文件说明 (`config.json`)
-
-配置文件位于插件根目录，开箱即用：
 
 ```json
 {
@@ -117,7 +162,7 @@ sequenceDiagram
 ```
 
 * `targetBaseUrl`：默认为 `"auto"`，自动读取当前激活 Provider 的原始上游 URL（跳过 20129 自身防回环）；也可手动配置为任意中转商/9router 地址。
-* `targetModels`：需要触发拦截的模型列表（支持模糊匹配）。
+* `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）。
 * `bootstrapCoreTools`：首轮保留的核心诱导工具集（默认 `Bash, Edit, Read, Write`）。
 * `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动还原配置）。
 
@@ -136,3 +181,4 @@ sequenceDiagram
 本项目基于 [MIT License](LICENSE) 开源。欢迎提交 PR 与 Issue！
 
 **作者**: [YixuAn](https://github.com/YixuAnsensei)
+**鸣谢**: [cc-haha 客户端项目](https://github.com/NanmiCoder/cc-haha) & DeepSeek Harness (DSH) 社区
