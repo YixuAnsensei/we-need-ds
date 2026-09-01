@@ -141,6 +141,50 @@ const cases = [
   {
     name: 'isDecisionTurn: 长会话新用户轮 = true (v5 常态极简关键)',
     check: () => isDecisionTurn(decisionBody)
+  },
+  {
+    name: '执行完任务后用户续话规划判定轮 → 极简裁切 (2)',
+    body: {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'task' },
+        { role: 'assistant', content: 'doing', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] },
+        { role: 'tool', content: 'out', tool_call_id: '1' },
+        { role: 'assistant', content: 'task done, summary' },
+        { role: 'user', content: '继续，规划一下下一步怎么扩展' }
+      ],
+      tools: allTools
+    },
+    expectFiltered: true,
+    expectMinimal: true,
+    expectCount: 2
+  },
+  {
+    name: '后台通知注入轮 (user 文本结尾) → 判定轮',
+    check: () => isDecisionTurn({
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'task' },
+        { role: 'assistant', content: 'doing', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] },
+        { role: 'tool', content: 'out', tool_call_id: '1' },
+        { role: 'assistant', content: 'done' },
+        { role: 'user', content: '<task-notification>background job finished</task-notification>' }
+      ]
+    })
+  },
+  {
+    name: 'CC 附加块: tool_result+text 混合消息 → 执行轮放行 (防误裁)',
+    check: () => !isDecisionTurn({
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'task' },
+        { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] },
+        { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 't1', content: 'out' },
+          { type: 'text', text: '<system-reminder>token warning</system-reminder>' }
+        ] }
+      ]
+    })
   }
 ];
 
