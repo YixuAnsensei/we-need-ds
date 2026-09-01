@@ -4,9 +4,6 @@ const state = require('./lib/state.js');
 
 const config = state.loadConfig();
 
-const RE_TOOL_FINISH = /"finish_reason"\s*:\s*"tool_calls"|"stop_reason"\s*:\s*"tool_use"/;
-const TAIL_WINDOW = 16384;
-
 function isSelfProxyUrl(url) {
   if (!url) return false;
   return url.includes(`:${config.port}`) || url.includes('127.0.0.1:20129') || url.includes('localhost:20129');
@@ -113,19 +110,35 @@ function maybeAutoArm(body) {
   state.log('auto-armed via we-need-ds command text in user turn');
 }
 
+function isDecisionTurn(body) {
+  const msgs = body.messages;
+  const last = msgs[msgs.length - 1];
+  if (!last || last.role !== 'user') return false;
+  if (isToolFollowup(body)) return false;
+  return true;
+}
+
 function shouldFilterTools(body, customState = null) {
   if (!body || !body.model) return false;
   if (!isDeepSeekProModel(body.model)) return false;
   if (!Array.isArray(body.messages) || body.messages.length === 0) return false;
+  if (!isDecisionTurn(body)) return false;
 
   const st = customState || state.readState();
   if (st && state.isArmActive(st)) return true;
 
-  const userMessages = body.messages.filter(m => m.role === 'user');
-  const hasToolCalls = body.messages.some(m => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls));
-
-  return (userMessages.length <= 1) && !hasToolCalls;
+  return (body.messages.filter(m => m.role === 'user').length <= 1);
 }
+
+const WENEED_GUIDE = [
+  'You are a helpful software engineer assistant. We need to follow this style for all internal reasoning (chain-of-thought):',
+  'First sentence rule (mandatory, highest priority): the first sentence inside <think> must open with "we need to ..." / "we need ...".',
+  'Following sentences keep "we need to ..." / "we need ..." as the core pattern, one concrete action each; interleave I\'ll / I can / I should / I will.',
+  'Avoid "let me ...". Prefer "we need to ..." / "we need ..." for opening steps.',
+  'Short and colloquial: one sentence per step, decision-level summaries only, we / I perspective.',
+  'Classify every task first: build (produce, verify, fix) / fix (read, locate, minimal change, verify) / weak (classify first, then build or fix).',
+  'Scope: this shapes reasoning only. Final replies follow the user\'s language and tone. Tool use is allowed and encouraged when needed.'
+].join('\n');
 
 function stripPersonaFromSystem(body) {
   const cleaned = [];
@@ -135,6 +148,7 @@ function stripPersonaFromSystem(body) {
     if (/You are Claude Code|Let me think|think step by step|interactive CLI tool/i.test(text)) continue;
     cleaned.push(blk);
   }
+  cleaned.push({ type: 'text', text: WENEED_GUIDE, cache_control: { type: 'ephemeral' } });
   if (body.system !== undefined) body.system = cleaned;
 
   if (Array.isArray(body.messages)) {
@@ -218,20 +232,37 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     const rawBody = Buffer.concat(chunks).toString('utf8');
     let outgoingBody = rawBody;
-    let wasTrimmed = false;
 
     if (req.method === 'POST' && rawBody) {
       let parsedBody = null;
       try { parsedBody = JSON.parse(rawBody); } catch (e) {}
       if (parsedBody) maybeAutoArm(parsedBody);
 
-      const before = rawBody;
-      outgoingBody = processRequestBody(rawBody);
-      if (outgoingBody !== before) {
-        wasTrimmed = true;
-        state.log(`tools filtered: ${req.url} -> upstream: ${upstreamBase}`);
-      } else if (config.logDetails) {
-        state.log(`passthrough: ${req.url} -> upstream: ${upstreamBase}`);
+      const st = state.readState();
+      const armed = state.isArmActive(st);
+
+      if (armed && parsedBody) {
+        if (isToolFollowup(parsedBody)) {
+          state.markChainSeen();
+          state.log('execution turn during arm window: full tools passthrough');
+        } else if (state.isChainSeen(st)) {
+          state.consumeArmWindow();
+          state.log('new user turn after execution chain: window consumed, passthrough');
+        } else {
+          const before = rawBody;
+          outgoingBody = processRequestBody(rawBody);
+          if (outgoingBody !== before) {
+            state.log(`decision turn trimmed: ${req.url} -> upstream: ${upstreamBase}`);
+          }
+        }
+      } else {
+        const before = rawBody;
+        outgoingBody = processRequestBody(rawBody);
+        if (outgoingBody !== before) {
+          state.log(`first-turn heuristic trimmed: ${req.url} -> upstream: ${upstreamBase}`);
+        } else if (config.logDetails) {
+          state.log(`passthrough: ${req.url} -> upstream: ${upstreamBase}`);
+        }
       }
     }
 
@@ -249,28 +280,6 @@ const server = http.createServer((req, res) => {
       method: req.method,
       headers: headers
     }, (proxyRes) => {
-      let tailBuf = Buffer.alloc(0);
-
-      proxyRes.on('data', (c) => {
-        tailBuf = Buffer.concat([tailBuf, c]);
-        if (tailBuf.length > TAIL_WINDOW) tailBuf = tailBuf.subarray(tailBuf.length - TAIL_WINDOW);
-      });
-
-      proxyRes.on('end', () => {
-        if (wasTrimmed && proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
-          const tail = tailBuf.toString('utf8');
-          const stillChaining = RE_TOOL_FINISH.test(tail);
-          if (stillChaining) {
-            state.markChainSeen();
-            state.log('response chained into tools, window kept open');
-          } else if (state.isChainSeen(state.readState())) {
-            state.consumeArmWindow();
-          } else {
-            state.log('trimmed turn ended without tools, window kept (no chain started yet)');
-          }
-        }
-      });
-
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
     });
@@ -295,4 +304,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { shouldFilterTools, processRequestBody, resolveTargetBaseUrl, config };
+module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, resolveTargetBaseUrl, config };

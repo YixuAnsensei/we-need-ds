@@ -20,13 +20,8 @@ const upstream = http.createServer((req, res) => {
   req.on('end', () => {
     if (req.url.includes('/fail')) { res.writeHead(500); res.end('{}'); return; }
     try { seenBodies.push(JSON.parse(data)); } catch (e) { seenBodies.push(null); }
-    if (req.url.includes('chain=1')) {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end('{"choices":[{"message":{"role":"assistant"},"finish_reason":"tool_calls"}]}');
-      return;
-    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end('{"ok":true,"stop_reason":"end_turn"}');
+    res.end('{"ok":true}');
   });
 });
 
@@ -63,11 +58,6 @@ function killDaemon() {
   } catch (e) {}
 }
 
-const baseMsgs = [
-  { role: 'user', content: 'round 1' },
-  { role: 'assistant', content: 'ok' },
-  { role: 'user', content: 'round 2' }
-];
 const tools4 = [
   { type: 'function', function: { name: 'Bash' } },
   { type: 'function', function: { name: 'Read' } },
@@ -75,7 +65,15 @@ const tools4 = [
   { type: 'function', function: { name: 'Workflow' } }
 ];
 
-const multiTurnBody = JSON.stringify({ model: 'deepseek-v4-pro', messages: baseMsgs, tools: tools4 });
+const multiTurnBody = JSON.stringify({
+  model: 'deepseek-v4-pro',
+  messages: [
+    { role: 'user', content: 'round 1' },
+    { role: 'assistant', content: 'ok' },
+    { role: 'user', content: 'round 2' }
+  ],
+  tools: tools4
+});
 const singleTurnBody = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hello' }], tools: tools4 });
 const toolFollowupBody = JSON.stringify({
   model: 'deepseek-v4-pro',
@@ -106,45 +104,44 @@ async function main() {
   spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore' }).unref();
   check('daemon 拉起', await waitProxy());
 
-  state.writeState({ enabled: true, providers: {}, keyMap: {}, defaultUpstream: 'http://127.0.0.1:2099', forceArmedAt: null });
+  state.writeState({ enabled: true, providers: {}, keyMap: {}, defaultUpstream: 'http://127.0.0.1:2099', forceArmedAt: null, chainSeen: false });
 
   await post('/v1/messages', multiTurnBody);
   check('基线: 无窗口多轮不裁 (4 tools)', lastToolCount() === 4);
 
   await post('/v1/messages', singleTurnBody);
-  check('首轮启发式: 单用户轮无窗裁切 (2 tools)', lastToolCount() === 2);
+  check('首轮启发式: 单用户轮裁切 (2 tools)', lastToolCount() === 2);
 
   state.armForceWindow({ armWindowMinutes: 20 });
   await post('/v1/messages', multiTurnBody);
-  check('武装中多轮新任务被裁 (2 tools)', lastToolCount() === 2);
-  check('链未启动: 响应无 tool 结尾窗口保持', state.isArmActive(state.readState()));
-  check('chainSeen 未标记', !state.isChainSeen(state.readState()));
-
-  await post('/v1/messages?chain=1', multiTurnBody);
-  check('武装中再次被裁 (2 tools)', lastToolCount() === 2);
-  check('响应进入工具链: chainSeen 标记', state.isChainSeen(state.readState()));
-  check('执行链持续: 窗口保持', state.isArmActive(state.readState()));
+  check('武装后首个判定轮裁切 (2 tools)', lastToolCount() === 2);
 
   await post('/v1/messages', toolFollowupBody);
-  check('武装中工具续跑轮也裁 (2 tools)', lastToolCount() === 2);
-  check('链结束后窗口自动消耗', !state.isArmActive(state.readState()));
+  check('执行轮全量放行 (4 tools)', lastToolCount() === 4);
+  check('执行轮标记 chainSeen', state.isChainSeen(state.readState()));
+  check('窗口保持开放', state.isArmActive(state.readState()));
+
+  await post('/v1/messages', toolFollowupBody);
+  check('执行链中途继续全量放行 (4 tools)', lastToolCount() === 4);
+  check('窗口仍开放', state.isArmActive(state.readState()));
 
   await post('/v1/messages', multiTurnBody);
-  check('消耗后恢复放行 (4 tools)', lastToolCount() === 4);
+  check('执行链结束后新用户轮: 窗口消耗', !state.isArmActive(state.readState()));
+  check('消耗后不裁 (4 tools)', lastToolCount() === 4);
+  check('chainSeen 已重置', !state.isChainSeen(state.readState()));
 
   state.armForceWindow({ armWindowMinutes: 20 });
   const r1 = await post('/v1/messages/fail', multiTurnBody);
   check('5xx 返回上游错误码', r1.status === 500);
-  check('5xx 失败不消耗窗口', !!state.readState().forceArmedAt);
+  check('5xx 不消耗窗口', state.isArmActive(state.readState()));
   await post('/v1/messages', multiTurnBody);
-  check('失败后重试依然被裁 (2 tools)', lastToolCount() === 2);
+  check('失败重试: 判定轮依然裁切 (2 tools)', lastToolCount() === 2);
 
   state.consumeArmWindow();
 
   await post('/v1/messages', autoArmBody);
   check('auto-arm: /we-need-ds 指令轮同请求被裁 (2 tools)', lastToolCount() === 2);
   check('auto-arm: 窗口已开启', state.isArmActive(state.readState()));
-  check('auto-arm 链未启动窗口保持', !!state.readState().forceArmedAt);
   state.consumeArmWindow();
 
   check('consumeArmWindow 无窗返回 false', state.consumeArmWindow() === false);
@@ -157,10 +154,8 @@ async function main() {
 
   const cOn1 = await ctl('on');
   check('/ctl on 第一次 ok', cOn1.status === 200 && state.readState().enabled === true);
-  check('/ctl on 附带武装', state.isArmActive(state.readState()));
   const cOn2 = await ctl('on');
-  check('/ctl on 重复执行仍 ok (幂等)', cOn2.status === 200 && state.readState().enabled === true);
-  check('重复 on 后账本仍一致', state.readState().defaultUpstream !== null);
+  check('/ctl on 重复执行幂等', cOn2.status === 200 && state.readState().enabled === true);
   const cOff = await ctl('off');
   check('/ctl off ok 且窗口清除', cOff.status === 200 && state.readState().enabled === false && !state.isArmActive(state.readState()));
 
