@@ -85,7 +85,7 @@ const cases = [
     expectFiltered: false
   },
   {
-    name: '长会话中途 + forceNextTurn 武装信号 (预期强制裁切至 4)',
+    name: '长会话中途 + 武装窗口生效 (预期强制裁切至 4)',
     body: {
       model: 'deepseek-v4-pro',
       messages: [
@@ -95,7 +95,7 @@ const cases = [
       ],
       tools: allTools
     },
-    customState: { forceNextTurn: true },
+    customState: { forceArmedAt: new Date().toISOString(), armWindowMinutes: 30 },
     expectFiltered: true
   },
   {
@@ -109,7 +109,20 @@ const cases = [
       ],
       tools: allTools
     },
-    customState: { forceNextTurn: false },
+    customState: { forceArmedAt: null },
+    expectFiltered: false
+  },
+  {
+    name: '武装窗口已过期 (预期透传 8)',
+    body: {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'round 1' },
+        { role: 'user', content: 'round 2' }
+      ],
+      tools: allTools
+    },
+    customState: { forceArmedAt: new Date(Date.now() - 31 * 60 * 1000).toISOString(), armWindowMinutes: 30 },
     expectFiltered: false
   }
 ];

@@ -6,6 +6,16 @@ const PROXY_SCRIPT = path.join(__dirname, '..', 'proxy.js');
 
 async function main() {
   const config = state.loadConfig();
+
+  try {
+    const r = state.recoverOrphans(config);
+    if (r && r.orphan && r.restoredList.length > 0) {
+      state.log(`session-start: ${r.restoredList.length} orphan providers restored`);
+    }
+  } catch (e) {
+    state.log(`session-start orphan recovery failed: ${e.message}`);
+  }
+
   const running = await state.isProxyRunning(config.port);
 
   if (!running) {

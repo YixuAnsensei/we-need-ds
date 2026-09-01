@@ -77,6 +77,17 @@ function isDeepSeekProModel(modelName) {
   return hasDeepSeek && (hasV4 || hasPro || hasFlash);
 }
 
+function isArmedCtlFollowup(body) {
+  const toolIdx = findLastIndex(body.messages, m => m.role === 'tool');
+  if (toolIdx <= 0) return false;
+  const prev = body.messages[toolIdx - 1];
+  if (!prev || prev.role !== 'assistant' || !Array.isArray(prev.tool_calls)) return false;
+  return prev.tool_calls.some(tc => {
+    const n = (tc.function && tc.function.name) || tc.name || '';
+    return String(n).includes('we-need-ds') || /ctl\.js/.test(JSON.stringify(tc.function && tc.function.arguments || ''));
+  });
+}
+
 function shouldFilterTools(body, customState = null) {
   if (!body || !body.model) return false;
   if (!isDeepSeekProModel(body.model)) return false;
@@ -85,23 +96,10 @@ function shouldFilterTools(body, customState = null) {
   const st = customState || state.readState();
   const lastMsg = body.messages[body.messages.length - 1];
 
-  if (st && st.forceNextTurn) {
+  if (st && state.isArmActive(st)) {
     const isUserTurn = lastMsg && lastMsg.role === 'user';
-    const isToolFollowup = lastMsg && lastMsg.role === 'tool';
-    if (isUserTurn || isToolFollowup) {
-      if (isToolFollowup) {
-        const toolIdx = findLastIndex(body.messages, m => m.role === 'tool');
-        const prev = toolIdx > 0 ? body.messages[toolIdx - 1] : null;
-        const prevHadCall = prev && prev.role === 'assistant' && Array.isArray(prev.tool_calls) &&
-          prev.tool_calls.some(tc => {
-            const n = (tc.function && tc.function.name) || tc.name || '';
-            return String(n).includes('we-need-ds') || /ctl\.js/.test(JSON.stringify(tc.function && tc.function.arguments || ''));
-          });
-        if (!prevHadCall) return false;
-      }
-      if (!customState) {
-        state.consumeForceNextTurn();
-      }
+    const isCtlFollowup = lastMsg && lastMsg.role === 'tool' && isArmedCtlFollowup(body);
+    if (isUserTurn || isCtlFollowup) {
       return true;
     }
   }

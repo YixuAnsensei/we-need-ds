@@ -14,5 +14,6 @@
     "Write"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 30
+  "idleAutoShutdownMinutes": 20,
+  "armWindowMinutes": 30
 }
