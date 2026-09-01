@@ -95,7 +95,7 @@ const cases = [
       ],
       tools: allTools
     },
-    customState: { forceArmedAt: new Date().toISOString(), armWindowMinutes: 30 },
+    customState: { forceArmedAt: new Date().toISOString(), armWindowMinutes: 20 },
     expectFiltered: true
   },
   {
@@ -122,7 +122,7 @@ const cases = [
       ],
       tools: allTools
     },
-    customState: { forceArmedAt: new Date(Date.now() - 31 * 60 * 1000).toISOString(), armWindowMinutes: 30 },
+    customState: { forceArmedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(), armWindowMinutes: 20 },
     expectFiltered: false
   }
 ];

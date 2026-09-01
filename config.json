@@ -15,5 +15,5 @@
   ],
   "logDetails": false,
   "idleAutoShutdownMinutes": 20,
-  "armWindowMinutes": 30
+  "armWindowMinutes": 20
 }

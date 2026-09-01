@@ -176,11 +176,13 @@ const server = http.createServer((req, res) => {
   req.on('end', () => {
     const rawBody = Buffer.concat(chunks).toString('utf8');
     let outgoingBody = rawBody;
+    let wasTrimmed = false;
 
     if (req.method === 'POST' && rawBody) {
       const before = rawBody;
       outgoingBody = processRequestBody(rawBody);
       if (outgoingBody !== before) {
+        wasTrimmed = true;
         state.log(`tools filtered: ${req.url} -> upstream: ${upstreamBase}`);
       } else if (config.logDetails) {
         state.log(`passthrough: ${req.url} -> upstream: ${upstreamBase}`);
@@ -201,6 +203,9 @@ const server = http.createServer((req, res) => {
       method: req.method,
       headers: headers
     }, (proxyRes) => {
+      if (wasTrimmed && proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
+        state.consumeArmWindow();
+      }
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
     });
