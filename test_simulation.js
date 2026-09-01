@@ -1,4 +1,6 @@
-const { shouldFilterTools, processRequestBody, isDecisionTurn } = require('./proxy.js');
+const fs = require('fs');
+const path = require('path');
+const { shouldFilterTools, processRequestBody, isDecisionTurn, isToolFollowup } = require('./proxy.js');
 
 const allTools = [
   { type: 'function', function: { name: 'Bash' } },
@@ -107,19 +109,29 @@ const cases = [
     }
   },
   {
-    name: '执行轮 OpenAI 格式 (tool 结尾, 透传 8)',
+    name: '执行轮 OpenAI 格式 (全量 8 工具 + DSH 人格)',
     body: executionBody,
-    expectFiltered: false,
-    expectCount: 8
+    expectFiltered: true,
+    expectCount: 8,
+    expectMinimal: true
   },
   {
-    name: '执行轮 Anthropic 格式 (tool_result, 透传 8)',
+    name: '执行轮 Anthropic 格式 (全量 8 工具 + DSH 人格)',
     body: anthropicExecutionBody,
-    expectFiltered: false,
-    expectCount: 8
+    expectFiltered: true,
+    expectCount: 8,
+    expectMinimal: true
   },
   {
-    name: '多轮执行链中途 (透传 8)',
+    name: '执行轮人格替换且原人格块被移除 (非拼接)',
+    check: () => {
+      const withPersona = { ...anthropicExecutionBody, system: [{ type: 'text', text: 'You are Claude Code, an interactive CLI tool' }] };
+      const out = JSON.parse(processRequestBody(JSON.stringify(withPersona)));
+      return Array.isArray(out.system) && out.system.length === 1 && !JSON.stringify(out).includes('Claude Code');
+    }
+  },
+  {
+    name: '多轮执行链中途 (全量 8 工具 + DSH 人格)',
     body: {
       model: 'deepseek-v4-pro',
       messages: [
@@ -131,8 +143,29 @@ const cases = [
       ],
       tools: allTools
     },
-    expectFiltered: false,
-    expectCount: 8
+    expectFiltered: true,
+    expectCount: 8,
+    expectMinimal: true
+  },
+  {
+    name: 'executionDshPersona=false 时执行轮恢复完全透传',
+    check: () => {
+      const orig = JSON.stringify(executionBody);
+      const cfgPath = path.join(__dirname, 'config.json');
+      const bak = fs.readFileSync(cfgPath, 'utf8');
+      try {
+        const cfg = JSON.parse(bak);
+        cfg.executionDshPersona = false;
+        fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+        delete require.cache[require.resolve('./proxy.js')];
+        const { processRequestBody: prb } = require('./proxy.js');
+        const out = prb(orig);
+        return out === orig;
+      } finally {
+        fs.writeFileSync(cfgPath, bak);
+        delete require.cache[require.resolve('./proxy.js')];
+      }
+    }
   },
   {
     name: 'isDecisionTurn: tool_result 续跑轮 = false',

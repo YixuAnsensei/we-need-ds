@@ -130,9 +130,11 @@ async function main() {
 
   await post('/v1/messages', toolFollowupBody);
   check('执行轮 OpenAI 格式: 全量放行 (4 tools)', lastToolCount() === 4);
+  check('执行轮 OpenAI 格式: DSH 人格替换 (v5.1)', lastIsDshMinimal());
 
   await post('/v1/messages', anthropicFollowupBody);
   check('执行轮 Anthropic 格式: 全量放行 (4 tools)', lastToolCount() === 4);
+  check('执行轮 Anthropic 格式: DSH 人格替换 (v5.1)', lastIsDshMinimal());
 
   await post('/v1/messages', toolFollowupBody);
   check('多轮执行链中途: 全量放行 (4 tools)', lastToolCount() === 4);

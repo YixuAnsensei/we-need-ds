@@ -57,7 +57,7 @@ sequenceDiagram
     CC->>Proxy: 执行轮请求 (tool / tool_result 回传)
     
     rect rgb(240, 253, 244)
-    Note over Proxy: 100% 全量放行：解除限制，全量 MCP/Skill 恢复可用
+    Note over Proxy: v5.1 全量放行：全量 MCP/Skill 恢复可用<br/>人格同步切换为 DSH 单行 (executionDshPersona)
     end
     
     Proxy->>Router: 原样透传
@@ -71,10 +71,10 @@ sequenceDiagram
 1. **⚡ 全量 Provider 映射池与动态路由（Multi-Provider Pool & Dynamic Auth Routing）**：
    * 自动接管 `providers.json` 中的所有服务商（9Router、BAI、YJS、商汤、OpenCode 等）；
    * 收到请求时根据 API Key / Token 动态回源到各自真实的官方/中转上游地址，多窗口、多标签页切换模型零干扰。
-2. **🎯 轮次结构感知极简模拟（Turn-Aware DSH Minimal, v5 常态化）**：
+2. **🎯 轮次结构感知极简模拟（Turn-Aware DSH Minimal, v5.1 全轮次人格统一）**：
    * 纯请求结构判定：末条为新 user 文本 = **判定轮**（等待模型规划），末条为 tool/tool_result = **执行轮**（工具续跑）；
    * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
-   * **每个执行轮**自动全量放行，无缝衔接工具执行；执行链结束后下一次新任务重新进入极简，全程零配置。
+   * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
 3. **🛡️ 三重防呆生命周期与无死锁保障**：
    * **自动启动挂载**：SessionStart 钩子开箱自启动；
    * **会话结束自动还原**：SessionEnd 钩子触发批量恢复；
@@ -170,14 +170,16 @@ sequenceDiagram
     "Edit"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 30
+  "idleAutoShutdownMinutes": 30,
+  "executionDshPersona": true
 }
 ```
 
 * `targetBaseUrl`：默认为 `"auto"`，自动按 Token 动态路由回各 Provider 原地址；
 * `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）；
 * `bootstrapCoreTools`：判定轮保留的极简工具集（默认 `Bash, Edit`，对齐 DSH 极简模式的 bash + str_replace_editor 两件套）；
-* `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动安全还原配置）。
+* `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动安全还原配置）；
+* `executionDshPersona`：执行轮是否同步切换 DSH 人格（默认 `true`；设为 `false` 退回执行轮完全透传）。
 
 ---
 

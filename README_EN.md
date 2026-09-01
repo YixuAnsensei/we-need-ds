@@ -70,10 +70,10 @@ sequenceDiagram
 1. **⚡ Multi-Provider Pool & Dynamic Auth Routing**:
    * Automatically hooks all provider instances in `providers.json` (9Router, BAI, YJS, SenseTime, OpenCode, etc.).
    * Dynamically resolves and routes incoming requests back to each provider's real upstream URL using API Key / Auth headers. Switching providers across tabs works seamlessly.
-2. **🎯 Turn-Aware DSH Minimal Simulation (v5, always-on)**:
+2. **🎯 Turn-Aware DSH Minimal Simulation (v5.1, unified persona on all turns)**:
    * Pure request-structure detection: last message is fresh user text = **decision turn** (model plans), last message is tool/tool_result = **execution turn** (tool follow-up);
    * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor);
-   * **Every execution turn** is fully unrestricted; after an execution chain ends, the next new task re-enters minimal mode automatically. Zero configuration.
+   * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
    * **Auto Hook on Start**: SessionStart hook initializes background proxy.
    * **Auto Restore on Exit**: SessionEnd hook restores all provider URLs.
@@ -139,9 +139,12 @@ sequenceDiagram
     "Edit"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 30
+  "idleAutoShutdownMinutes": 30,
+  "executionDshPersona": true
 }
 ```
+
+* `executionDshPersona`: whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns).
 
 ---
 

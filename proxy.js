@@ -111,22 +111,38 @@ function applyDshMinimalSystem(body) {
   return body;
 }
 
+function shouldApplyMinimalPersona(body, isExecution) {
+  if (config.stripSystemPersona === false) return false;
+  if (!isExecution) return true;
+  return config.executionDshPersona !== false;
+}
+
 function processRequestBody(rawBody) {
   try {
     const body = JSON.parse(rawBody);
 
-    if (shouldFilterTools(body)) {
-      if (Array.isArray(body.tools) && body.tools.length > 0) {
-        const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
-        body.tools = body.tools.filter(t => {
-          const name = (t.function && t.function.name) || t.name || '';
-          return coreSet.has(name.toLowerCase());
-        });
+    const isExecution = isToolFollowup(body);
+    if (isDeepSeekProModel(body && body.model) && Array.isArray(body && body.messages) && body.messages.length > 0) {
+      if (isExecution) {
+          if (shouldApplyMinimalPersona(body, true)) {
+            applyDshMinimalSystem(body);
+          return JSON.stringify(body);
+        }
+        return rawBody;
       }
-      if (config.stripSystemPersona !== false) {
-        applyDshMinimalSystem(body);
+      if (shouldFilterTools(body)) {
+        if (Array.isArray(body.tools) && body.tools.length > 0) {
+          const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
+          body.tools = body.tools.filter(t => {
+            const name = (t.function && t.function.name) || t.name || '';
+            return coreSet.has(name.toLowerCase());
+          });
+        }
+        if (shouldApplyMinimalPersona(body, false)) {
+          applyDshMinimalSystem(body);
+        }
+        return JSON.stringify(body);
       }
-      return JSON.stringify(body);
     }
     return rawBody;
   } catch (err) {
@@ -225,4 +241,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, resolveTargetBaseUrl, config };
+module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, isToolFollowup, resolveTargetBaseUrl, config };
