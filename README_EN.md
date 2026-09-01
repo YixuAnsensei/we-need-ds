@@ -29,9 +29,9 @@ Recent community research (pioneered by the DeepSeek Harness community) revealed
 
 ---
 
-## 💡 The Solution: Two-Phase Dynamic Bootstrap
+## 💡 The Solution: Turn-Aware DSH Minimal Simulation (v5)
 
-**`we-need-ds`** provides a transparent, zero-latency proxy plugin that dynamically decouples tool exposure across conversation phases:
+**`we-need-ds`** provides a transparent, zero-latency proxy plugin that dynamically decouples tool exposure based on request structure:
 
 ```mermaid
 sequenceDiagram
@@ -43,17 +43,17 @@ sequenceDiagram
 
     User->>CC: Command: /we-need-ds Refactor authentication system
     Note over CC,Proxy: Session starts / Command invoked: Proxy ready, multi-provider pool attached
-    CC->>Proxy: Turn 1 Request (Carrying 30+ MCP tool schemas)
+    CC->>Proxy: Decision Turn Request (new task text, carrying 30+ MCP tool schemas)
     
     rect rgb(235, 248, 255)
-    Note over Proxy: Protocol Decoupling:<br/>Target model matched → Trims tools to [Bash, Edit, Read, Write]<br/>Dynamically routes to original upstream based on API Key
+    Note over Proxy: v5 DSH Minimal Simulation (every decision turn):<br/>Target model matched → System prompt replaced with official DSH one-liner<br/>Tools trimmed to [Bash, Edit] (mirrors DSH bash + str_replace_editor)<br/>Dynamically routes to original upstream based on API Key
     end
     
     Proxy->>Router: Forward minimal request
     Router-->>CC: DeepSeek hits RL sweet-spot, emits "We need..." planning chain (SSE passthrough)
     
-    Note over CC,Proxy: Turn 2 onwards: Execution phase
-    CC->>Proxy: Turn 2 Request (Tool execution results)
+    Note over CC,Proxy: Execution Turn: model starts calling tools
+    CC->>Proxy: Execution Turn Request (tool / tool_result)
     
     rect rgb(240, 253, 244)
     Note over Proxy: 100% Unrestricted:<br/>All MCPs and skills fully released
@@ -70,9 +70,10 @@ sequenceDiagram
 1. **⚡ Multi-Provider Pool & Dynamic Auth Routing**:
    * Automatically hooks all provider instances in `providers.json` (9Router, BAI, YJS, SenseTime, OpenCode, etc.).
    * Dynamically resolves and routes incoming requests back to each provider's real upstream URL using API Key / Auth headers. Switching providers across tabs works seamlessly.
-2. **🎯 One-shot Force Trigger**:
-   * When switching to DeepSeek Pro mid-session in a long conversation, invoking `/we-need-ds <task>` or `/we-need-ds:on` arms a **one-shot trigger**.
-   * Only the immediate current turn is trimmed to 4 tools to force deep reasoning; the trigger is consumed immediately, and all subsequent turns enjoy 100% unrestricted tool access.
+2. **🎯 Turn-Aware DSH Minimal Simulation (v5, always-on)**:
+   * Pure request-structure detection: last message is fresh user text = **decision turn** (model plans), last message is tool/tool_result = **execution turn** (tool follow-up);
+   * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor);
+   * **Every execution turn** is fully unrestricted; after an execution chain ends, the next new task re-enters minimal mode automatically. Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
    * **Auto Hook on Start**: SessionStart hook initializes background proxy.
    * **Auto Restore on Exit**: SessionEnd hook restores all provider URLs.
@@ -105,7 +106,7 @@ sequenceDiagram
    export ANTHROPIC_UPSTREAM_BASE_URL="http://127.0.0.1:20128"
    export ANTHROPIC_BASE_URL="http://127.0.0.1:20129"
    ```
-2. Start `claude` normally. Turn-1 requests for `deepseek-v4-pro*` will trigger "We need" reasoning while all other models (Claude 3.7, GPT, Gemini) pass through 100% untouched.
+2. Start `claude` normally. Every decision turn for `deepseek-v4-pro*` enters the DSH minimal environment triggering "We need" reasoning, tool execution turns get full tool access, and all other models (Claude 3.7, GPT, Gemini) pass through 100% untouched.
 
 ---
 
@@ -113,12 +114,12 @@ sequenceDiagram
 
 | Skill Command | Description | Typical Use Case |
 | :--- | :--- | :--- |
-| **`/we-need-ds <task>`** | **Execute with full-power reasoning** | Primary entry point: arms one-shot trigger and runs task |
+| **`/we-need-ds <task>`** | **Execute with full-power reasoning** | Primary entry point: enables interception and runs task |
 | **`/we-need-ds:plan <task>`** | **Read-only planning agent** | Summons `we-need-planner` to generate Markdown blueprint |
 | **`/we-need-ds:doctor`** | **Health diagnostic** | Inspects proxy port, environment mode, 25-provider pool status |
-| **`/we-need-ds:test`** | **Run test simulation suite** | 10 unit test cases verifying tool trimming, mid-session arming, and passthrough |
+| **`/we-need-ds:test`** | **Run test simulation suite** | 12 test cases verifying decision-turn minimal mode, execution-turn passthrough, and non-target passthrough |
 | **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, interception switch, hooked providers, and logs |
-| **`/we-need-ds:on`** | **Force enable & arm next turn** | Hooks all providers and arms next question for deep reasoning |
+| **`/we-need-ds:on`** | **Enable interception** | Hooks all providers; decision turns enter minimal simulation by default |
 | **`/we-need-ds:off`** | **Force disable & restore** | Restores all providers to their original upstream URLs |
 
 ---
@@ -135,9 +136,7 @@ sequenceDiagram
   ],
   "bootstrapCoreTools": [
     "Bash",
-    "Edit",
-    "Read",
-    "Write"
+    "Edit"
   ],
   "logDetails": false,
   "idleAutoShutdownMinutes": 30

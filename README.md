@@ -30,7 +30,7 @@
 
 ---
 
-## 💡 我们的解决方案：双阶段动态解耦（Two-Phase Bootstrap）
+## 💡 我们的解决方案：轮次结构感知动态解耦（Turn-Aware DSH Minimal Simulation, v5）
 
 **`we-need-ds`** 是专为 Claude Code 与 [cc-haha](https://github.com/NanmiCoder/cc-haha) 原生设计的全自动增强插件，**无需关闭任何 MCP，零感知唤醒满血 DeepSeek**：
 
@@ -44,17 +44,17 @@ sequenceDiagram
 
     User->>CC: 输入任务: /we-need-ds 重构登录与鉴权系统
     Note over CC,Proxy: 会话开启/执行指令：透明代理就绪，多 Provider 池自动接管
-    CC->>Proxy: 第 1 轮请求 (包含全部 30+ 个 MCP 工具 Schema)
+    CC->>Proxy: 判定轮请求 (新任务文本, 包含全部 30+ 个 MCP 工具 Schema)
     
     rect rgb(235, 248, 255)
-    Note over Proxy: 协议层动态解耦：<br/>命中 DS Pro 目标模型 → 裁切为 [Bash, Edit, Read, Write] 4 基础工具<br/>根据 API Key 自动反向路由到真实的对应上游
+    Note over Proxy: v5 DSH 极简模拟（常态化，不限首轮）：<br/>命中 DS Pro 目标模型 + 判定轮 → 系统提示词替换为 DSH 官方单行<br/>工具裁切为 [Bash, Edit] 两件套 (对齐 DSH 极简模式)<br/>根据 API Key 自动反向路由到真实的对应上游
     end
     
-    Proxy->>Router: 转发裁切后的纯净请求
+    Proxy->>Router: 转发极简后的纯净请求
     Router-->>CC: DeepSeek 触发 RL 甜点区，吐出 "We need..." 深度规划链 (SSE 零延迟直通)
     
-    Note over CC,Proxy: 第 2 轮起：模型开始执行具体步骤或调用工具
-    CC->>Proxy: 第 2 轮请求 (工具结果回传)
+    Note over CC,Proxy: 模型开始执行具体步骤或调用工具
+    CC->>Proxy: 执行轮请求 (tool / tool_result 回传)
     
     rect rgb(240, 253, 244)
     Note over Proxy: 100% 全量放行：解除限制，全量 MCP/Skill 恢复可用
@@ -71,9 +71,10 @@ sequenceDiagram
 1. **⚡ 全量 Provider 映射池与动态路由（Multi-Provider Pool & Dynamic Auth Routing）**：
    * 自动接管 `providers.json` 中的所有服务商（9Router、BAI、YJS、商汤、OpenCode 等）；
    * 收到请求时根据 API Key / Token 动态回源到各自真实的官方/中转上游地址，多窗口、多标签页切换模型零干扰。
-2. **🎯 单次强制武装机制（One-shot Force Trigger）**：
-   * 在已有对话的长会话中途中切入 DeepSeek Pro 时，输入 `/we-need-ds <任务>` 或 `/we-need-ds:on`，插件自动进行**单次强制武装**；
-   * 仅在紧随其后的**当轮提问**中强制触发 4 工具裁剪推演，随后立即消费复位，第二轮起无缝放行全量工具！
+2. **🎯 轮次结构感知极简模拟（Turn-Aware DSH Minimal, v5 常态化）**：
+   * 纯请求结构判定：末条为新 user 文本 = **判定轮**（等待模型规划），末条为 tool/tool_result = **执行轮**（工具续跑）；
+   * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
+   * **每个执行轮**自动全量放行，无缝衔接工具执行；执行链结束后下一次新任务重新进入极简，全程零配置。
 3. **🛡️ 三重防呆生命周期与无死锁保障**：
    * **自动启动挂载**：SessionStart 钩子开箱自启动；
    * **会话结束自动还原**：SessionEnd 钩子触发批量恢复；
@@ -136,7 +137,7 @@ sequenceDiagram
      export ANTHROPIC_BASE_URL="http://127.0.0.1:20129"
      ```
 2. **运行与体验**：
-   * 正常启动 `claude` 即可，首轮所有 `deepseek-v4-pro*` 请求自动触发 "We need" 思维链，其他模型（Claude / GPT / Gemini 等）全量透传直通。
+   * 正常启动 `claude` 即可，所有 `deepseek-v4-pro*` 判定轮请求自动进入 DSH 极简环境触发 "We need" 思维链，工具执行轮全量放行，其他模型（Claude / GPT / Gemini 等）全量透传直通。
 
 ---
 
@@ -144,12 +145,12 @@ sequenceDiagram
 
 | 技能命令 | 功能说明 | 典型使用场景 |
 | :--- | :--- | :--- |
-| **`/we-need-ds <任务>`** | **一键启动满血思维链并执行** | 默认主入口，附带任务，自动武装单次强制触发并执行 |
+| **`/we-need-ds <任务>`** | **一键启动满血思维链并执行** | 默认主入口，附带任务，自动开启拦截并执行 |
 | **`/we-need-ds:plan <任务>`** | **调用只读规划专家子代理** | 超大项目、重构任务，想先看 Markdown 蓝图而不动代码 |
 | **`/we-need-ds:doctor`** | **一键深度体检** | 排查代理端口、环境模式、25 个 Provider 池接管与连通状态 |
-| **`/we-need-ds:test`** | **运行两阶段解耦自测试套件** | 10 组包含首轮裁切、长会话中途武装、非目标模型透传的完整断言 |
+| **`/we-need-ds:test`** | **运行轮次结构感知自测试套件** | 12 组包含判定轮极简、执行轮放行、非目标模型透传的完整断言 |
 | **`/we-need-ds:status`** | **查看当前运行与拦截状态** | 查看当前代理进程、拦截开关、被接管的提供商清单与日志 |
-| **`/we-need-ds:on`** | **手动开启拦截并武装下一轮** | 显式开启全量接管，并武装下一次提问强制走思维链 |
+| **`/we-need-ds:on`** | **手动开启拦截环境** | 显式开启全量接管，判定轮常态进入极简模拟 |
 | **`/we-need-ds:off`** | **手动关闭拦截并还原端点** | 随时手动将所有 Provider 恢复到各自原有的真实地址 |
 
 ---
@@ -166,9 +167,7 @@ sequenceDiagram
   ],
   "bootstrapCoreTools": [
     "Bash",
-    "Edit",
-    "Read",
-    "Write"
+    "Edit"
   ],
   "logDetails": false,
   "idleAutoShutdownMinutes": 30
@@ -177,7 +176,7 @@ sequenceDiagram
 
 * `targetBaseUrl`：默认为 `"auto"`，自动按 Token 动态路由回各 Provider 原地址；
 * `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）；
-* `bootstrapCoreTools`：首轮保留的核心诱导工具集（默认 `Bash, Edit, Read, Write`）；
+* `bootstrapCoreTools`：判定轮保留的极简工具集（默认 `Bash, Edit`，对齐 DSH 极简模式的 bash + str_replace_editor 两件套）；
 * `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动安全还原配置）。
 
 ---

@@ -9,11 +9,8 @@
   ],
   "bootstrapCoreTools": [
     "Bash",
-    "Edit",
-    "Read",
-    "Write"
+    "Edit"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 20,
-  "armWindowMinutes": 20
+  "idleAutoShutdownMinutes": 20
 }
