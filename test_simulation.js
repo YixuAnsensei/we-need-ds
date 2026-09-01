@@ -99,6 +99,38 @@ const cases = [
     expectFiltered: true
   },
   {
+    name: '武装生效 + 工具结果续跑轮 (预期裁切至 4)',
+    body: {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'round 1' },
+        { role: 'assistant', content: 'reply', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] },
+        { role: 'tool', content: 'out', tool_call_id: '1' }
+      ],
+      tools: allTools
+    },
+    customState: { forceArmedAt: new Date().toISOString(), armWindowMinutes: 20 },
+    expectFiltered: true
+  },
+  {
+    name: '武装生效 + 多轮工具链中途 (预期裁切至 4)',
+    body: {
+      model: 'deepseek-v4-pro',
+      messages: [
+        { role: 'user', content: 'task' },
+        { role: 'assistant', content: 'thinking', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] },
+        { role: 'tool', content: 'out', tool_call_id: '1' },
+        { role: 'assistant', content: 'thinking 2', tool_calls: [{ id: '2', type: 'function', function: { name: 'Read' } }] },
+        { role: 'tool', content: 'out 2', tool_call_id: '2' },
+        { role: 'assistant', content: 'thinking 3', tool_calls: [{ id: '3', type: 'function', function: { name: 'Edit' } }] },
+        { role: 'tool', content: 'out 3', tool_call_id: '3' }
+      ],
+      tools: allTools
+    },
+    customState: { forceArmedAt: new Date().toISOString(), armWindowMinutes: 20 },
+    expectFiltered: true
+  },
+  {
     name: '长会话中途 + 无武装信号且多轮 (预期透传 8)',
     body: {
       model: 'deepseek-v4-pro',

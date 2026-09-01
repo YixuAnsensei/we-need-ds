@@ -1,8 +1,32 @@
 const { spawn } = require('child_process');
 const path = require('path');
+const http = require('http');
 const state = require('../lib/state.js');
 
 const PROXY_SCRIPT = path.join(__dirname, '..', 'proxy.js');
+
+function daemonCtl(port, action) {
+  return new Promise((resolve) => {
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port,
+      path: '/ctl',
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      timeout: 4000
+    }, (res) => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => {
+        try { resolve({ reachable: true, status: res.statusCode, body: JSON.parse(data) }); }
+        catch (e) { resolve({ reachable: true, status: res.statusCode, body: null }); }
+      });
+    });
+    req.on('error', () => resolve({ reachable: false }));
+    req.on('timeout', () => { req.destroy(); resolve({ reachable: false }); });
+    req.end(JSON.stringify({ action }));
+  });
+}
 
 async function main() {
   const config = state.loadConfig();
@@ -29,9 +53,14 @@ async function main() {
     state.log(up ? 'daemon started via session-start' : 'daemon failed to start');
   }
 
-  const result = state.enableInterception(config);
+  let result = await daemonCtl(config.port, 'on');
+  if (result.reachable) {
+    result = result.body || { ok: true };
+  } else {
+    result = state.enableInterception(config);
+  }
   if (result.ok) {
-    console.log(`[we-need-ds] 拦截已开启：baseUrl 临时切至 :${config.port}（会话结束自动还原为 ${result.originalUrl || '原地址'}）`);
+    console.log(`[we-need-ds] 拦截已开启：baseUrl 临时切至 :${config.port}（会话结束自动还原）`);
   } else {
     console.log(`[we-need-ds] 拦截开启失败：${result.reason}`);
   }

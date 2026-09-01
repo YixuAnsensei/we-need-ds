@@ -4,6 +4,9 @@ const state = require('./lib/state.js');
 
 const config = state.loadConfig();
 
+const RE_TOOL_FINISH = /"finish_reason"\s*:\s*"tool_calls"|"stop_reason"\s*:\s*"tool_use"/;
+const TAIL_WINDOW = 16384;
+
 function isSelfProxyUrl(url) {
   if (!url) return false;
   return url.includes(`:${config.port}`) || url.includes('127.0.0.1:20129') || url.includes('localhost:20129');
@@ -77,15 +80,37 @@ function isDeepSeekProModel(modelName) {
   return hasDeepSeek && (hasV4 || hasPro || hasFlash);
 }
 
-function isArmedCtlFollowup(body) {
-  const toolIdx = findLastIndex(body.messages, m => m.role === 'tool');
-  if (toolIdx <= 0) return false;
-  const prev = body.messages[toolIdx - 1];
-  if (!prev || prev.role !== 'assistant' || !Array.isArray(prev.tool_calls)) return false;
-  return prev.tool_calls.some(tc => {
-    const n = (tc.function && tc.function.name) || tc.name || '';
-    return String(n).includes('we-need-ds') || /ctl\.js/.test(JSON.stringify(tc.function && tc.function.arguments || ''));
-  });
+function isToolFollowup(body) {
+  const msgs = body.messages;
+  if (!Array.isArray(msgs) || msgs.length === 0) return false;
+  const last = msgs[msgs.length - 1];
+  if (last.role === 'tool') return true;
+  if (last.role === 'user' && Array.isArray(last.content)) {
+    return last.content.some(c => c && c.type === 'tool_result');
+  }
+  return false;
+}
+
+function extractUserText(msg) {
+  if (!msg) return '';
+  if (typeof msg.content === 'string') return msg.content;
+  if (Array.isArray(msg.content)) {
+    return msg.content.filter(c => c && c.type === 'text').map(c => c.text || '').join('\n');
+  }
+  return '';
+}
+
+const ARM_TRIGGER = /\/we-need-ds\b|we-need-ds[\s\/:：]*(on|开启|武装)/i;
+
+function maybeAutoArm(body) {
+  if (!body || !Array.isArray(body.messages) || body.messages.length === 0) return;
+  if (isToolFollowup(body)) return;
+  const last = body.messages[body.messages.length - 1];
+  if (!last || last.role !== 'user') return;
+  const text = extractUserText(last);
+  if (!ARM_TRIGGER.test(text)) return;
+  state.armForceWindow(config);
+  state.log('auto-armed via we-need-ds command text in user turn');
 }
 
 function shouldFilterTools(body, customState = null) {
@@ -94,15 +119,7 @@ function shouldFilterTools(body, customState = null) {
   if (!Array.isArray(body.messages) || body.messages.length === 0) return false;
 
   const st = customState || state.readState();
-  const lastMsg = body.messages[body.messages.length - 1];
-
-  if (st && state.isArmActive(st)) {
-    const isUserTurn = lastMsg && lastMsg.role === 'user';
-    const isCtlFollowup = lastMsg && lastMsg.role === 'tool' && isArmedCtlFollowup(body);
-    if (isUserTurn || isCtlFollowup) {
-      return true;
-    }
-  }
+  if (st && state.isArmActive(st)) return true;
 
   const userMessages = body.messages.filter(m => m.role === 'user');
   const hasToolCalls = body.messages.some(m => m.role === 'tool' || (m.role === 'assistant' && m.tool_calls));
@@ -166,6 +183,31 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (req.url === '/ctl' && req.method === 'POST') {
+    const ctlChunks = [];
+    req.on('data', c => ctlChunks.push(c));
+    req.on('end', () => {
+      let action = '';
+      try { action = (JSON.parse(Buffer.concat(ctlChunks).toString('utf8')) || {}).action || ''; } catch (e) {}
+      let result;
+      if (action === 'on') {
+        result = state.enableInterception(config, { arm: true });
+        if (result.ok) state.armForceWindow(config);
+      } else if (action === 'off') {
+        result = state.disableInterception(config);
+      } else if (action === 'arm') {
+        state.armForceWindow(config);
+        result = { ok: true, armed: true };
+      } else {
+        result = { ok: false, reason: `unknown action: ${action}` };
+      }
+      res.writeHead(result.ok ? 200 : 400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(result));
+      state.log(`ctl ${action} via daemon endpoint -> ok=${result.ok}`);
+    });
+    return;
+  }
+
   const upstreamBase = resolveTargetBaseUrl(req);
   const targetUrl = new URL(req.url, upstreamBase);
   const isHttps = targetUrl.protocol === 'https:';
@@ -179,6 +221,10 @@ const server = http.createServer((req, res) => {
     let wasTrimmed = false;
 
     if (req.method === 'POST' && rawBody) {
+      let parsedBody = null;
+      try { parsedBody = JSON.parse(rawBody); } catch (e) {}
+      if (parsedBody) maybeAutoArm(parsedBody);
+
       const before = rawBody;
       outgoingBody = processRequestBody(rawBody);
       if (outgoingBody !== before) {
@@ -203,9 +249,28 @@ const server = http.createServer((req, res) => {
       method: req.method,
       headers: headers
     }, (proxyRes) => {
-      if (wasTrimmed && proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
-        state.consumeArmWindow();
-      }
+      let tailBuf = Buffer.alloc(0);
+
+      proxyRes.on('data', (c) => {
+        tailBuf = Buffer.concat([tailBuf, c]);
+        if (tailBuf.length > TAIL_WINDOW) tailBuf = tailBuf.subarray(tailBuf.length - TAIL_WINDOW);
+      });
+
+      proxyRes.on('end', () => {
+        if (wasTrimmed && proxyRes.statusCode >= 200 && proxyRes.statusCode < 300) {
+          const tail = tailBuf.toString('utf8');
+          const stillChaining = RE_TOOL_FINISH.test(tail);
+          if (stillChaining) {
+            state.markChainSeen();
+            state.log('response chained into tools, window kept open');
+          } else if (state.isChainSeen(state.readState())) {
+            state.consumeArmWindow();
+          } else {
+            state.log('trimmed turn ended without tools, window kept (no chain started yet)');
+          }
+        }
+      });
+
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
     });
