@@ -38,7 +38,7 @@ sequenceDiagram
     autonumber
     participant User as Developer
     participant CC as Claude Code / cc-haha
-    participant Proxy as we-need-ds Proxy (:20129)
+    participant Proxy as we-need-ds Proxy (:20329)
     participant Router as 9router / Upstream API / Official Endpoints
 
     User->>CC: Command: /we-need-ds Refactor authentication system
@@ -104,7 +104,7 @@ sequenceDiagram
 1. Set your upstream and proxy environment variables:
    ```bash
    export ANTHROPIC_UPSTREAM_BASE_URL="http://127.0.0.1:20128"
-   export ANTHROPIC_BASE_URL="http://127.0.0.1:20129"
+   export ANTHROPIC_BASE_URL="http://127.0.0.1:20329"
    ```
 2. Start `claude` normally. Every decision turn for `deepseek-v4-pro*` enters the DSH minimal environment triggering "We need" reasoning, tool execution turns get full tool access, and all other models (Claude 3.7, GPT, Gemini) pass through 100% untouched.
 
@@ -128,7 +128,7 @@ sequenceDiagram
 
 ```json
 {
-  "port": 20129,
+  "port": 20329,
   "targetBaseUrl": "auto",
   "targetModels": [
     "deepseek-v4-pro-0813",

@@ -46,7 +46,7 @@ function lastIsDshMinimal() {
 
 function post(pathName, body) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port: 20129, path: pathName, method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 5000 }, (res) => {
+    const req = http.request({ hostname: '127.0.0.1', port: 20329, path: pathName, method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 5000 }, (res) => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => resolve({ status: res.statusCode, body: data }));
@@ -60,14 +60,14 @@ function post(pathName, body) {
 async function waitProxy() {
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 200));
-    if (await state.isProxyRunning(20129)) return true;
+    if (await state.isProxyRunning(20329)) return true;
   }
   return false;
 }
 
 function killDaemon() {
   try {
-    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 20129 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
+    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 20329 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
     if (/^\d+$/.test(out)) { try { execSync(`taskkill /F /PID ${out}`); } catch (e) {} }
   } catch (e) {}
 }

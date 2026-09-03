@@ -1,5 +1,5 @@
 {
-  "port": 20129,
+  "port": 20329,
   "targetBaseUrl": "auto",
   "targetModels": [
     "deepseek-v4-pro-0813",

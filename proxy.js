@@ -6,7 +6,7 @@ const config = state.loadConfig();
 
 function isSelfProxyUrl(url) {
   if (!url) return false;
-  return url.includes(`:${config.port}`) || url.includes('127.0.0.1:20129') || url.includes('localhost:20129');
+  return url.includes(`:${config.port}`) || url.includes(`:${config.port}/`) || url.includes('127.0.0.1:20329') || url.includes('localhost:20329');
 }
 
 function resolveTargetBaseUrl(req) {

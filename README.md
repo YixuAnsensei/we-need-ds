@@ -39,7 +39,7 @@ sequenceDiagram
     autonumber
     participant User as 开发者
     participant CC as Claude Code / cc-haha 宿主
-    participant Proxy as we-need-ds 代理 (:20129)
+    participant Proxy as we-need-ds 代理 (:20329)
     participant Router as 9router / 中转商 / 官方端点
 
     User->>CC: 输入任务: /we-need-ds 重构登录与鉴权系统
@@ -134,7 +134,7 @@ sequenceDiagram
      ```
    * 将 Claude Code 端点指向 `we-need-ds` 代理：
      ```bash
-     export ANTHROPIC_BASE_URL="http://127.0.0.1:20129"
+     export ANTHROPIC_BASE_URL="http://127.0.0.1:20329"
      ```
 2. **运行与体验**：
    * 正常启动 `claude` 即可，所有 `deepseek-v4-pro*` 判定轮请求自动进入 DSH 极简环境触发 "We need" 思维链，工具执行轮全量放行，其他模型（Claude / GPT / Gemini 等）全量透传直通。
@@ -159,7 +159,7 @@ sequenceDiagram
 
 ```json
 {
-  "port": 20129,
+  "port": 20329,
   "targetBaseUrl": "auto",
   "targetModels": [
     "deepseek-v4-pro-0813",

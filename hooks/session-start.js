@@ -18,8 +18,9 @@ function daemonCtl(port, action) {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => {
+        if (res.statusCode !== 200) { resolve({ reachable: false, status: res.statusCode }); return; }
         try { resolve({ reachable: true, status: res.statusCode, body: JSON.parse(data) }); }
-        catch (e) { resolve({ reachable: true, status: res.statusCode, body: null }); }
+        catch (e) { resolve({ reachable: false, status: res.statusCode }); }
       });
     });
     req.on('error', () => resolve({ reachable: false }));
@@ -57,7 +58,10 @@ async function main() {
   if (result.reachable) {
     result = result.body || { ok: true };
   } else {
-    result = state.enableInterception(config);
+    result = {
+      ok: false,
+      reason: `端口 ${config.port} 上的进程不响应 /ctl（可能被其他程序占用，拦截已放弃，providers 保持真实地址）`
+    };
   }
   if (result.ok) {
     console.log(`[we-need-ds] 拦截已开启：baseUrl 临时切至 :${config.port}（会话结束自动还原）`);
