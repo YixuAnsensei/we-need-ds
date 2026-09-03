@@ -194,15 +194,23 @@ const server = http.createServer((req, res) => {
   const transport = isHttps ? https : http;
 
   const chunks = [];
+  req.on('error', (err) => {
+    state.log(`client req error: ${req.url} -> ${err.message}`);
+    if (!res.headersSent) { try { res.writeHead(400); res.end(); } catch (e) {} }
+  });
   req.on('data', chunk => chunks.push(chunk));
   req.on('end', () => {
-    const rawBody = Buffer.concat(chunks).toString('utf8');
-    let outgoingBody = rawBody;
+    const rawBuffer = Buffer.concat(chunks);
+    let outgoingBuffer = rawBuffer;
 
-    if (req.method === 'POST' && rawBody) {
-      const before = rawBody;
-      outgoingBody = processRequestBody(rawBody);
-      if (outgoingBody !== before) {
+    const contentEncoding = (req.headers['content-encoding'] || '').toLowerCase();
+    const isCompressed = contentEncoding && contentEncoding !== 'identity';
+
+    if (req.method === 'POST' && rawBuffer.length > 0 && !isCompressed) {
+      const rawBody = rawBuffer.toString('utf8');
+      const processed = processRequestBody(rawBody);
+      if (processed !== rawBody) {
+        outgoingBuffer = Buffer.from(processed, 'utf8');
         state.log(`decision turn DSH-minimal: ${req.url} -> upstream: ${upstreamBase}`);
       } else if (config.logDetails) {
         state.log(`passthrough: ${req.url} -> upstream: ${upstreamBase}`);
@@ -215,8 +223,8 @@ const server = http.createServer((req, res) => {
     delete headers['keep-alive'];
     delete headers['transfer-encoding'];
 
-    if (req.method === 'POST' && outgoingBody) {
-      headers['content-length'] = Buffer.byteLength(outgoingBody);
+    if (req.method === 'POST' && outgoingBuffer.length > 0) {
+      headers['content-length'] = outgoingBuffer.length;
     }
 
     const proxyReq = transport.request(targetUrl, {
@@ -225,23 +233,56 @@ const server = http.createServer((req, res) => {
     }, (proxyRes) => {
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       proxyRes.pipe(res);
+      proxyRes.on('error', (err) => {
+        state.log(`upstream res error: ${upstreamBase}${req.url} -> ${err.message}`);
+        try { res.destroy(); } catch (e) {}
+      });
+    });
+
+    proxyReq.setTimeout(120000, () => {
+      state.log(`upstream timeout: ${upstreamBase}${req.url}`);
+      proxyReq.destroy(new Error('upstream timeout after 120s'));
     });
 
     proxyReq.on('error', (err) => {
       if (!res.headersSent) {
         res.writeHead(502, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: { message: `we-need-ds 代理异常 (上游 ${upstreamBase}): ${err.message}` } }));
+      } else {
+        try { res.destroy(); } catch (e) {}
       }
     });
 
-    if (outgoingBody) {
-      proxyReq.write(outgoingBody);
+    res.on('error', (err) => {
+      state.log(`client res error: ${req.url} -> ${err.message}`);
+      try { proxyReq.destroy(); } catch (e) {}
+    });
+
+    if (outgoingBuffer.length > 0) {
+      proxyReq.write(outgoingBuffer);
     }
     proxyReq.end();
   });
 });
 
 if (require.main === module) {
+  process.on('uncaughtException', (err) => {
+    state.log(`uncaughtException (daemon survives): ${err && err.stack ? err.stack : err}`);
+  });
+  process.on('unhandledRejection', (reason) => {
+    state.log(`unhandledRejection (daemon survives): ${reason && reason.stack ? reason.stack : reason}`);
+  });
+  server.on('error', (err) => {
+    state.log(`server error: ${err.message}`);
+    if (err.code === 'EADDRINUSE') {
+      state.log(`端口 ${config.port} 被占用，daemon 无法启动`);
+      process.exit(1);
+    }
+  });
+  server.on('clientError', (err, socket) => {
+    state.log(`clientError: ${err.message}`);
+    try { socket.destroy(); } catch (e) {}
+  });
   server.listen(config.port, '127.0.0.1', () => {
     state.log(`daemon listening on :${config.port}`);
   });
