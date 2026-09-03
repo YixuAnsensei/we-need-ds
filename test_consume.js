@@ -46,7 +46,7 @@ function lastIsDshMinimal() {
 
 function post(pathName, body) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port: 20329, path: pathName, method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 5000 }, (res) => {
+    const req = http.request({ hostname: '127.0.0.1', port: 21329, path: pathName, method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 5000 }, (res) => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => resolve({ status: res.statusCode, body: data }));
@@ -60,14 +60,14 @@ function post(pathName, body) {
 async function waitProxy() {
   for (let i = 0; i < 20; i++) {
     await new Promise(r => setTimeout(r, 200));
-    if (await state.isProxyRunning(20329)) return true;
+    if (await state.isProxyRunning(21329)) return true;
   }
   return false;
 }
 
 function killDaemon() {
   try {
-    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 20329 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
+    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 21329 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
     if (/^\d+$/.test(out)) { try { execSync(`taskkill /F /PID ${out}`); } catch (e) {} }
   } catch (e) {}
 }
@@ -109,13 +109,16 @@ const anthropicFollowupBody = JSON.stringify({
 });
 
 async function main() {
+  const PROVIDERS_BAK = state.PROVIDERS_PATH + '.test-bak';
+  const hadProviders = fs.existsSync(state.PROVIDERS_PATH);
+  if (hadProviders) fs.copyFileSync(state.PROVIDERS_PATH, PROVIDERS_BAK);
   try { fs.copyFileSync(STATE_PATH, BACKUP); } catch (e) {}
 
   await new Promise(r => upstream.listen(2099, '127.0.0.1', r));
   killDaemon();
   await new Promise(r => setTimeout(r, 500));
 
-  spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore' }).unref();
+  spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore', env: { ...process.env, WE_NEED_DS_TEST_PORT: '21329' } }).unref();
   check('daemon 拉起', await waitProxy());
 
   state.writeState({ enabled: true, providers: {}, keyMap: {}, defaultUpstream: 'http://127.0.0.1:2099' });
@@ -163,6 +166,8 @@ async function main() {
   upstream.close();
 
   try { fs.copyFileSync(BACKUP, STATE_PATH); fs.unlinkSync(BACKUP); } catch (e) {}
+  if (hadProviders) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
+  try { fs.unlinkSync(PROVIDERS_BAK); } catch (e) {}
 
   console.log(failed === 0 ? '\n全部通过' : `\n${failed} 项失败`);
   process.exit(failed === 0 ? 0 : 1);
@@ -170,6 +175,7 @@ async function main() {
 
 main().catch(e => {
   try { fs.copyFileSync(BACKUP, STATE_PATH); } catch (e2) {}
+  try { if (fs.existsSync(PROVIDERS_BAK)) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); } catch (e2) {}
   console.error('FATAL', e);
   process.exit(1);
 });

@@ -55,7 +55,7 @@ function lastIsDshMinimal() {
 
 function post(pathName, bodyStr, headers) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port: 20329, path: pathName, method: 'POST', headers: { 'content-type': 'application/json', ...(headers || {}) }, timeout: 8000 }, (res) => {
+    const req = http.request({ hostname: '127.0.0.1', port: 21329, path: pathName, method: 'POST', headers: { 'content-type': 'application/json', ...(headers || {}) }, timeout: 8000 }, (res) => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
@@ -67,7 +67,7 @@ function post(pathName, bodyStr, headers) {
 }
 function get(pathName) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: '127.0.0.1', port: 20329, path: pathName, method: 'GET', timeout: 5000 }, (res) => {
+    const req = http.request({ hostname: '127.0.0.1', port: 21329, path: pathName, method: 'GET', timeout: 5000 }, (res) => {
       let data = '';
       res.on('data', c => data += c);
       res.on('end', () => resolve({ status: res.statusCode, body: data }));
@@ -81,18 +81,18 @@ function get(pathName) {
 async function waitProxy() {
   for (let i = 0; i < 25; i++) {
     await new Promise(r => setTimeout(r, 200));
-    if (await state.isProxyRunning(20329)) return true;
+    if (await state.isProxyRunning(21329)) return true;
   }
   return false;
 }
 function killDaemon() {
   try {
-    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 20329 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
+    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 21329 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
     if (/^\d+$/.test(out)) { try { execSync(`taskkill /F /PID ${out}`); } catch (e) {} }
   } catch (e) {}
 }
 function spawnDaemon(extraEnv) {
-  spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore', env: { ...process.env, ...(extraEnv || {}) } }).unref();
+  spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore', env: { ...process.env, ...(extraEnv || {}), WE_NEED_DS_TEST_PORT: '21329' } }).unref();
 }
 
 const bashTool = { type: 'function', function: { name: 'Bash', parameters: { type: 'object' } } };
@@ -140,6 +140,9 @@ const openAINoSystem = JSON.stringify({
 });
 
 async function main() {
+  const PROVIDERS_BAK = state.PROVIDERS_PATH + '.fulltest-bak';
+  const hadProviders = fs.existsSync(state.PROVIDERS_PATH);
+  if (hadProviders) fs.copyFileSync(state.PROVIDERS_PATH, PROVIDERS_BAK);
   try {
     const upstreamMain = await makeUpstream(2099, 'main');
     const upstreamSecond = await makeUpstream(2100, 'second');
@@ -157,7 +160,7 @@ async function main() {
       keyMap: {
         'sk-test-key-a': 'http://127.0.0.1:2099',
         'sk-test-key-b': 'http://127.0.0.1:2100',
-        'sk-loop': 'http://127.0.0.1:20329'
+        'sk-loop': 'http://127.0.0.1:21329'
       },
       defaultUpstream: 'http://127.0.0.1:2099'
     });
@@ -228,13 +231,13 @@ async function main() {
 
     await post('/v1/messages', openAINoSystem, { authorization: 'Bearer sk-loop' });
     check('A24 keyMap 指向自身 → 防自环回落 default', lastHit().tag === 'main');
-    check('A25 防自环后代理仍存活', await state.isProxyRunning(20329));
+    check('A25 防自环后代理仍存活', await state.isProxyRunning(21329));
 
     await post('/v1/messages', streamDecision, { authorization: 'Bearer sk-test-key-a' });
     check('A26 判定轮 SSE: 上游收到裁剪后 body', lastToolCount() === 2 && lastIsDshMinimal());
 
     const sse = await new Promise((resolve, reject) => {
-      const req = http.request({ hostname: '127.0.0.1', port: 20329, path: '/v1/messages/stream', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 8000 }, (res) => {
+      const req = http.request({ hostname: '127.0.0.1', port: 21329, path: '/v1/messages/stream', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 8000 }, (res) => {
         let data = '';
         res.on('data', c => data += c);
         res.on('end', () => resolve({ status: res.statusCode, body: data, headers: res.headers }));
@@ -273,7 +276,7 @@ async function main() {
     await post('/v1/messages', decisionAnthropic);
     check('B2 空闲期请求正常处理', lastToolCount() === 2);
     await new Promise(r => setTimeout(r, 65000));
-    check('B3 空闲后 daemon 自毁退出', !(await state.isProxyRunning(20329)));
+    check('B3 空闲后 daemon 自毁退出', !(await state.isProxyRunning(21329)));
     check('B4 自毁前执行了还原 (enabled=false)', state.readState().enabled === false);
 
     console.log('===== Phase C: 上游解析优先级 =====');
@@ -303,6 +306,8 @@ async function main() {
     try { fs.unlinkSync(STATE_BAK); } catch (e) {}
     fs.copyFileSync(CONFIG_BAK, CONFIG_PATH);
     try { fs.unlinkSync(CONFIG_BAK); } catch (e) {}
+    if (hadProviders) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
+    try { fs.unlinkSync(PROVIDERS_BAK); } catch (e) {}
     killDaemon();
   }
 
@@ -313,6 +318,7 @@ async function main() {
 main().catch(e => {
   try { if (fs.existsSync(STATE_BAK)) fs.copyFileSync(STATE_BAK, STATE_PATH); } catch (e2) {}
   try { fs.copyFileSync(CONFIG_BAK, CONFIG_PATH); } catch (e2) {}
+  try { if (fs.existsSync(PROVIDERS_BAK)) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); } catch (e2) {}
   killDaemon();
   console.error('FATAL', e);
   process.exit(1);
