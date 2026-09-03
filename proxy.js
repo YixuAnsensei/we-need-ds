@@ -40,7 +40,8 @@ setInterval(() => {
     const idleMs = Date.now() - lastActiveTime;
     if (idleMs > config.idleAutoShutdownMinutes * 60 * 1000) {
       const r = state.disableInterception(config);
-      state.log(`daemon idle exit; baseUrl restored`);
+      const n = (r && r.restoredList && r.restoredList.length) || 0;
+      state.log(`daemon idle exit after ${config.idleAutoShutdownMinutes}min: restored ${n} providers, next new message will auto-revive`);
       process.exit(0);
     }
   }
@@ -99,11 +100,22 @@ function shouldFilterTools(body) {
 
 const DSH_MINIMAL_PROMPT = 'You are a helpful software engineer assistant.';
 
+function isOpenAiStyle(body) {
+  if (!Array.isArray(body.messages)) return false;
+  return body.messages.some(m => {
+    if (m.role === 'system') return true;
+    if (m.role === 'tool') return true;
+    if (m.role === 'assistant' && Array.isArray(m.tool_calls)) return true;
+    return false;
+  });
+}
+
 function applyDshMinimalSystem(body) {
+  const openAiStyle = body.system === undefined && isOpenAiStyle(body);
   if (Array.isArray(body.messages)) {
     body.messages = body.messages.filter(m => m.role !== 'system');
   }
-  if (body.system === undefined) {
+  if (openAiStyle) {
     body.messages = [{ role: 'system', content: DSH_MINIMAL_PROMPT }, ...(body.messages || [])];
   } else {
     body.system = [{ type: 'text', text: DSH_MINIMAL_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -115,6 +127,33 @@ function shouldApplyMinimalPersona(body, isExecution) {
   if (config.stripSystemPersona === false) return false;
   if (!isExecution) return true;
   return config.executionDshPersona !== false;
+}
+
+function collectUsedToolNames(messages) {
+  const used = new Set();
+  if (!Array.isArray(messages)) return used;
+  for (const m of messages) {
+    if (m && Array.isArray(m.content)) {
+      for (const c of m.content) {
+        if (c && c.type === 'tool_use' && c.name) used.add(c.name.toLowerCase());
+      }
+    }
+    if (m && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) {
+        const n = tc && tc.function && tc.function.name;
+        if (n) used.add(n.toLowerCase());
+      }
+    }
+  }
+  return used;
+}
+
+function applyThinkingBudget(body) {
+  const budget = config.thinkingBudget;
+  if (typeof budget === 'number' && budget > 0) {
+    body.thinking = { type: 'enabled', budget_tokens: budget };
+  }
+  return body;
 }
 
 function processRequestBody(rawBody) {
@@ -133,14 +172,17 @@ function processRequestBody(rawBody) {
       if (shouldFilterTools(body)) {
         if (Array.isArray(body.tools) && body.tools.length > 0) {
           const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
+          const usedNames = collectUsedToolNames(body.messages);
           body.tools = body.tools.filter(t => {
             const name = (t.function && t.function.name) || t.name || '';
-            return coreSet.has(name.toLowerCase());
+            const lower = name.toLowerCase();
+            return coreSet.has(lower) || usedNames.has(lower);
           });
         }
         if (shouldApplyMinimalPersona(body, false)) {
           applyDshMinimalSystem(body);
         }
+        applyThinkingBudget(body);
         return JSON.stringify(body);
       }
     }

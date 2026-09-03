@@ -163,7 +163,9 @@ sequenceDiagram
   "targetBaseUrl": "auto",
   "targetModels": [
     "deepseek-v4-pro-0813",
-    "deepseek-v4-pro"
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "deepseek-v4-flash-0731"
   ],
   "bootstrapCoreTools": [
     "Bash",
@@ -171,15 +173,22 @@ sequenceDiagram
   ],
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
-  "executionDshPersona": true
+  "executionDshPersona": true,
+  "thinkingBudget": 0
 }
 ```
 
-* `targetBaseUrl`：默认为 `"auto"`，自动按 Token 动态路由回各 Provider 原地址；
-* `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）；
-* `bootstrapCoreTools`：判定轮保留的极简工具集（默认 `Bash, Edit`，对齐 DSH 极简模式的 bash + str_replace_editor 两件套）；
-* `idleAutoShutdownMinutes`：空闲自毁时间（默认 `0` = 常驻不退出；设为正数 N 则空闲 N 分钟后自动还原退出，之后 UserPromptSubmit 钩子会在你发新消息时自动拉起并重新接管）；
-* `executionDshPersona`：执行轮是否同步切换 DSH 人格（默认 `true`；设为 `false` 退回执行轮完全透传）。
+| 配置项 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `port` | `20329` | 本地透明代理监听端口（仅绑定 127.0.0.1）。若被其他程序占用请改此值；测试环境变量 `WE_NEED_DS_TEST_PORT` 可临时覆盖，不影响生产配置。 |
+| `targetBaseUrl` | `"auto"` | 上游解析策略。`"auto"` = 按请求携带的 API Key 在账本中动态路由回各 Provider 真实上游；设为具体 URL 则强制所有请求回源到该地址。 |
+| `targetModels` | DS V4 全家桶 | 需要触发拦截处理的模型列表（内置归一化引擎，下划线/空格/连字符/路径前缀/大小写变体均能精准匹配）。**列表之外的模型（Claude / GPT / Gemini / Qwen 等）一律字节级原样透传，绝不修改。** |
+| `bootstrapCoreTools` | `["Bash","Edit"]` | 判定轮保留的极简工具集（对齐 DSH 极简模式的 bash + str_replace_editor 两件套）。此外，会话历史中已被调用过的工具也会自动保留，防止协议校验失败。 |
+| `logDetails` | `false` | 设为 `true` 时在日志中记录每个透传请求的 URL 与上游（调试路由问题用）。 |
+| `idleAutoShutdownMinutes` | `0` | 空闲自动释放开关。默认 `0` = 常驻不退出；设为正数 N 则代理空闲超过 N 分钟后自动还原所有 Provider 并退出，下次新消息由 UserPromptSubmit 钩子自动拉起并重新接管。 |
+| `executionDshPersona` | `true` | 执行轮（工具续跑）是否也同步切换为 DSH 极简人格。默认 `true`（全程 DSH 人格，仅工具集不同）；设为 `false` 则执行轮完全原样透传（保留 Claude Code 原始人格）。 |
+| `thinkingBudget` | `0` | 判定轮是否附带 Anthropic extended thinking 预算。默认 `0` = 关闭（不注入任何 thinking 字段，依赖模型原生思维链）；设为正数 N 则在判定轮请求中注入 `thinking: {type:"enabled", budget_tokens:N}`，作为触发深度推理链的可选增强手段。 |
+| `stripSystemPersona` | *(缺省=生效)* | 人格替换总开关。默认所有命中 DS 目标模型的请求都替换为 DSH 单行人格；显式设为 `false` 可完全关闭人格替换（仅保留工具裁切）。 |
 
 ---
 

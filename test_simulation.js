@@ -101,11 +101,19 @@ const cases = [
     }
   },
   {
-    name: 'OpenAI 格式 (无 system 字段) 注入 system 消息',
+    name: 'OpenAI 格式 (有 tool 特征, 无 system) 注入 system 消息',
+    check: () => {
+      const body = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: 'x', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] }, { role: 'tool', content: 'out', tool_call_id: '1' }], tools: allTools };
+      const out = JSON.parse(processRequestBody(JSON.stringify(body)));
+      return out.messages[0].role === 'system' && out.messages[0].content === 'You are a helpful software engineer assistant.';
+    }
+  },
+  {
+    name: 'M1: 无特征请求(疑似Anthropic无system)用顶层system字段(不插非法消息)',
     check: () => {
       const body = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hi' }], tools: allTools };
       const out = JSON.parse(processRequestBody(JSON.stringify(body)));
-      return out.messages[0].role === 'system' && out.messages[0].content === 'You are a helpful software engineer assistant.';
+      return Array.isArray(out.system) && out.system[0].text === 'You are a helpful software engineer assistant.' && !out.messages.some(m => m.role === 'system');
     }
   },
   {

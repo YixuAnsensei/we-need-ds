@@ -132,7 +132,9 @@ sequenceDiagram
   "targetBaseUrl": "auto",
   "targetModels": [
     "deepseek-v4-pro-0813",
-    "deepseek-v4-pro"
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "deepseek-v4-flash-0731"
   ],
   "bootstrapCoreTools": [
     "Bash",
@@ -140,11 +142,22 @@ sequenceDiagram
   ],
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
-  "executionDshPersona": true
+  "executionDshPersona": true,
+  "thinkingBudget": 0
 }
 ```
 
-* `executionDshPersona`: whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns).
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `port` | `20329` | Local transparent proxy port (binds 127.0.0.1 only). Change if occupied; the `WE_NEED_DS_TEST_PORT` env var overrides it for tests without touching production config. |
+| `targetBaseUrl` | `"auto"` | Upstream resolution. `"auto"` = route each request back to its provider's real upstream by API Key from the ledger; a concrete URL forces all traffic to that upstream. |
+| `targetModels` | DS V4 family | Models that trigger interception (normalization engine matches underscores/spaces/hyphens/path prefixes/case variants). **Every model outside this list (Claude / GPT / Gemini / Qwen, …) is passed through byte-for-byte, never modified.** |
+| `bootstrapCoreTools` | `["Bash","Edit"]` | Minimal tool set kept on decision turns (mirrors DSH's bash + str_replace_editor pair). Tools already invoked in conversation history are also auto-kept to avoid protocol validation errors. |
+| `logDetails` | `false` | When `true`, logs every passthrough request's URL and upstream (for routing debugging). |
+| `idleAutoShutdownMinutes` | `0` | Idle auto-release switch. Default `0` = daemon stays resident; set to N to auto-restore all providers and exit after N idle minutes — the UserPromptSubmit hook revives it on your next message. |
+| `executionDshPersona` | `true` | Whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns). |
+| `thinkingBudget` | `0` | Optional Anthropic extended-thinking budget on decision turns. Default `0` = off (no thinking field injected; relies on the model's native chain). A positive N injects `thinking: {type:"enabled", budget_tokens:N}` as an optional reinforcement for deep reasoning. |
+| `stripSystemPersona` | *(absent = on)* | Master persona-replacement switch. By default every DS-target request gets the DSH one-liner persona; set to `false` to disable persona replacement entirely (tool trimming still applies). |
 
 ---
 

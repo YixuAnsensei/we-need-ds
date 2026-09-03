@@ -219,8 +219,8 @@ async function main() {
     check('A18 模型名下划线变体命中', lastToolCount() === 2);
 
     await post('/v1/messages', openAINoSystem);
-    check('A19 OpenAI 无 system 字段 → 注入 DSH system 消息', lastBody().messages[0].role === 'system' && lastBody().messages[0].content === 'You are a helpful software engineer assistant.');
-    check('A20 注入未破坏后续消息', lastBody().messages[1].role === 'user');
+    check('A19 M1: 无特征请求 → 顶层 system 字段 (不插非法 system 消息)', Array.isArray(lastBody().system) && lastBody().system[0].text === 'You are a helpful software engineer assistant.' && !lastBody().messages.some(m => m.role === 'system'));
+    check('A20 原 user 消息未被破坏', lastBody().messages[0].role === 'user' && lastBody().messages[0].content === 'hello');
 
     await post('/v1/messages', openAINoSystem, { authorization: 'Bearer sk-test-key-b' });
     check('A21 Bearer Key 动态路由到 second 上游', lastHit().tag === 'second');
@@ -330,6 +330,28 @@ async function main() {
       if (hadProv) fs.copyFileSync(provBak, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBak); } catch (e) {}
     }
+
+    console.log('===== Phase E: 非DS底线 + M1/M3 边界 (纯函数) =====');
+    const { processRequestBody: prbE, isToolFollowup: itf } = require('./proxy.js');
+    const nonDsModels = ['claude-3-5-sonnet', 'gpt-5', 'gemini-2.5-flash', 'qwen3.8-max', 'glm-5.3', 'kimi-k3'];
+    let nonDsAllPass = true;
+    for (const mdl of nonDsModels) {
+      const raw = JSON.stringify({ model: mdl, system: [{ type: 'text', text: 'You are Claude Code CLI' }], messages: [{ role: 'user', content: 'hi' }], tools: [{ name: 'Bash' }, { name: 'X' }] });
+      const out = prbE(raw);
+      if (out !== raw || out.includes('helpful software engineer')) { nonDsAllPass = false; console.log(`   ✗ ${mdl} 被修改!`); }
+    }
+    check('E1 所有非DS模型带CC人格+工具仍字节级原样透传 (安全底线)', nonDsAllPass);
+
+    const anthNoSystem = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hi' }], tools: [{ name: 'Bash' }, { name: 'Edit' }, { name: 'X' }] });
+    const outAnth = JSON.parse(prbE(anthNoSystem));
+    check('E2 M1: Anthropic无system判定轮→用顶层system字段(不插非法system消息)', Array.isArray(outAnth.system) && outAnth.system[0].text === 'You are a helpful software engineer assistant.' && !(outAnth.messages || []).some(m => m.role === 'system'));
+
+    const openAiNoSystem = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'assistant', content: 'x', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] }, { role: 'tool', content: 'out', tool_call_id: '1' }], tools: [{ type: 'function', function: { name: 'Bash' } }] });
+    const outOai = JSON.parse(prbE(openAiNoSystem));
+    check('E3 M1: OpenAI无system执行轮→插system消息(合法)', (outOai.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.'));
+
+    const mixedTr = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'o' }, { type: 'text', text: '<system-reminder>warn</system-reminder>' }] }] };
+    check('E4 M3: tool_result+文本混合仍判执行轮(不误砍进行中的工具链)', itf(mixedTr) === true);
 
     upstreamMain.close();
     upstreamSecond.close();

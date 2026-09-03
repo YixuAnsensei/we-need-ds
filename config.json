@@ -13,5 +13,6 @@
   ],
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
-  "executionDshPersona": true
+  "executionDshPersona": true,
+  "thinkingBudget": 0
 }
