@@ -76,9 +76,9 @@ sequenceDiagram
    * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
    * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
 3. **🛡️ 三重防呆生命周期与无死锁保障**：
-   * **自动启动挂载**：SessionStart 钩子开箱自启动；
+   * **自动启动挂载 + 消息级自愈**：SessionStart 钩子开箱自启动；UserPromptSubmit 钩子每条新消息自检复活；
    * **会话结束自动还原**：SessionEnd 钩子触发批量恢复；
-   * **空闲 30 分钟守护自毁兜底**：无请求 30 分钟后自动退出，退出前必执行双重扫雷还原，绝无半死不活的残留死锁；
+   * **常驻守护 + 消息级自愈**：daemon 默认常驻不退出；UserPromptSubmit 钩子在你每条新消息时自检，daemon 若失效自动拉起并重新接管；SessionEnd/会话结束自动安全还原；
    * **非目标模型 100% 零侵入**：Claude / GPT / Gemini / Qwen 纯字节流直通。
 
 ---
@@ -170,7 +170,7 @@ sequenceDiagram
     "Edit"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 30,
+  "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true
 }
 ```
@@ -178,7 +178,7 @@ sequenceDiagram
 * `targetBaseUrl`：默认为 `"auto"`，自动按 Token 动态路由回各 Provider 原地址；
 * `targetModels`：需要触发拦截的模型列表（内置正则归一化引擎，无论下划线、空格、连字符还是路径前缀均能精准匹配）；
 * `bootstrapCoreTools`：判定轮保留的极简工具集（默认 `Bash, Edit`，对齐 DSH 极简模式的 bash + str_replace_editor 两件套）；
-* `idleAutoShutdownMinutes`：无请求空闲退出时间（默认 30 分钟，退出前会自动安全还原配置）；
+* `idleAutoShutdownMinutes`：空闲自毁时间（默认 `0` = 常驻不退出；设为正数 N 则空闲 N 分钟后自动还原退出，之后 UserPromptSubmit 钩子会在你发新消息时自动拉起并重新接管）；
 * `executionDshPersona`：执行轮是否同步切换 DSH 人格（默认 `true`；设为 `false` 退回执行轮完全透传）。
 
 ---

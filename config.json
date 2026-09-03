@@ -12,6 +12,6 @@
     "Edit"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 20,
+  "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true
 }

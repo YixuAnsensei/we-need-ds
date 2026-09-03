@@ -75,9 +75,9 @@ sequenceDiagram
    * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor);
    * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
-   * **Auto Hook on Start**: SessionStart hook initializes background proxy.
+   * **Auto Hook on Start + Revive**: SessionStart hook initializes the background proxy; UserPromptSubmit hook revives it automatically if dead.
    * **Auto Restore on Exit**: SessionEnd hook restores all provider URLs.
-   * **30-Min Idle Self-Destruct**: After 30 minutes of inactivity, the proxy daemon restores all provider URLs and exits cleanly.
+   * **常驻守护 + 消息级自愈 (Always-on + Self-Healing)**: daemon 常驻不退出；UserPromptSubmit 钩子在你每条新消息时自检，若失效自动拉起并重新接管；
    * **100% Zero-Touch for Non-Target Models**: Claude, GPT, Gemini, Qwen models pass through with pure byte-level streaming.
 
 ---
@@ -139,7 +139,7 @@ sequenceDiagram
     "Edit"
   ],
   "logDetails": false,
-  "idleAutoShutdownMinutes": 30,
+  "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true
 }
 ```
