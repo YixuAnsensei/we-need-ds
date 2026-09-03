@@ -299,6 +299,38 @@ async function main() {
     check('C4 环境变量兜底路由', lastHit().tag === 'second');
 
     killDaemon();
+
+    console.log('===== Phase D: provider 映射根治 (无硬编码白名单/无9Router错发) =====');
+    const provBak = state.PROVIDERS_PATH + '.phaseD-bak';
+    const hadProv = fs.existsSync(state.PROVIDERS_PATH);
+    if (hadProv) fs.copyFileSync(state.PROVIDERS_PATH, provBak);
+    try {
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({
+        activeId: 'd-new-9999',
+        providers: [
+          { id: 'd-new-9999', name: 'D全新中转', baseUrl: 'https://api.dbrandnew.example', apiKey: 'sk-d-new', models: { a: 'deepseek-v4-pro' } },
+          { id: 'd-proxy-orphan', name: 'D孤儿', baseUrl: 'http://127.0.0.1:21329', apiKey: 'sk-d-orphan', models: { a: 'gpt-5' } }
+        ]
+      }, null, 2));
+      const cfgD = state.loadConfig();
+      cfgD.port = 21329;
+      const rOn = state.enableInterception(cfgD);
+      const stD = state.readState();
+      const afterOn = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      check('D1 全新provider真实url正确入账本 (非9Router)', stD.providers['d-new-9999'].originalUrl === 'https://api.dbrandnew.example');
+      check('D2 全新provider keyMap正确路由 (非9Router)', stD.keyMap['sk-d-new'] === 'https://api.dbrandnew.example');
+      check('D3 全新provider baseUrl改写为代理', afterOn.providers[0].baseUrl.includes('21329'));
+      check('D4 已是代理地址且无账本的孤儿被跳过不接管 (不瞎猜9Router)', !stD.providers['d-proxy-orphan']);
+      const rOff = state.disableInterception(cfgD);
+      const afterOff = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      check('D5 off还原全新provider为真实url (非9Router)', afterOff.providers[0].baseUrl === 'https://api.dbrandnew.example');
+      check('D6 无可信记录的孤儿off时列入unrestorable而非错还原', Array.isArray(rOff.unrestorableList) && rOff.unrestorableList.some(x => x.id === 'd-proxy-orphan'));
+    } finally {
+      if (hadProv) fs.copyFileSync(provBak, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
+      try { fs.unlinkSync(provBak); } catch (e) {}
+    }
+
     upstreamMain.close();
     upstreamSecond.close();
   } finally {

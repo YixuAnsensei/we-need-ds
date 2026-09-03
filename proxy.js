@@ -30,7 +30,7 @@ function resolveTargetBaseUrl(req) {
     return process.env.ANTHROPIC_UPSTREAM_BASE_URL;
   }
 
-  return 'http://127.0.0.1:20128';
+  return null;
 }
 
 let lastActiveTime = Date.now();
@@ -183,6 +183,12 @@ const server = http.createServer((req, res) => {
   }
 
   const upstreamBase = resolveTargetBaseUrl(req);
+  if (!upstreamBase) {
+    state.log(`resolve fail: ${req.url} 无法确定真实上游（keyMap/defaultUpstream/env 均无），拒绝静默错发`);
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'we-need-ds 无法确定该请求的真实上游地址（apiKey 未在账本中、且无 defaultUpstream/环境变量兜底），已拒绝以避免错发到其他服务商。请重新开启拦截或检查 provider 配置。' } }));
+    return;
+  }
   const targetUrl = new URL(req.url, upstreamBase);
   const isHttps = targetUrl.protocol === 'https:';
   const transport = isHttps ? https : http;
