@@ -1,5 +1,6 @@
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
 const state = require('./lib/state.js');
@@ -414,6 +415,30 @@ async function main() {
         if (hadProvForEnv) fs.renameSync(provHide, state.PROVIDERS_PATH);
         else { try { fs.unlinkSync(provHide); } catch (e) {} }
       }
+
+      console.log('===== Phase G: D2 幂等重接管 + D3 迁移扫描 cache 版本目录 =====');
+
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({ activeId: 'g1', providers: [{ id: 'g1', name: 'G幂等', baseUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-g', models: { a: 'deepseek-v4-pro' } }] }, null, 2));
+      const cfgG = state.loadConfig(); cfgG.port = 21329;
+      state.enableInterception(cfgG);
+      state.enableInterception(cfgG);
+      const g1State = state.readState();
+      const g1Prov = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8')).providers[0];
+      check('G1 D2: 重复 on 幂等,originalUrl 不被污染成代理地址', g1State.providers.g1.originalUrl === 'https://api.deepseek.com/anthropic' && g1Prov.baseUrl.includes('21329'));
+
+      const fakeHome = path.join(os.tmpdir(), 'wnd-migtest-' + process.pid);
+      try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch (e) {}
+      fs.mkdirSync(path.join(fakeHome, 'lib'), { recursive: true });
+      fs.copyFileSync(path.join(__dirname, 'lib', 'state.js'), path.join(fakeHome, 'lib', 'state.js'));
+      const cacheVerDir = path.join(fakeHome, '.claude', 'plugins', 'cache', 'claude-plugins-official', 'we-need-ds', 'a1b2c3d4');
+      fs.mkdirSync(cacheVerDir, { recursive: true });
+      const legacyLedger = { enabled: true, proxyUrl: 'http://127.0.0.1:20329', providers: { mig: { name: 'M', originalUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-m' } }, keyMap: {}, defaultUpstream: null, ts: new Date(Date.parse('2026-01-01T00:00:00Z')).toISOString() };
+      fs.writeFileSync(path.join(cacheVerDir, 'runtime-state.json'), JSON.stringify(legacyLedger));
+      const migScript = path.join(fakeHome, 'mig.js');
+      fs.writeFileSync(migScript, `const s=require(${JSON.stringify(path.join(fakeHome, 'lib', 'state.js'))});const fs=require('fs');let ok=false;try{const d=JSON.parse(fs.readFileSync(s.STATE_PATH,'utf8'));ok=d.providers&&d.providers.mig&&d.providers.mig.originalUrl==='https://api.deepseek.com/anthropic';}catch(e){}console.log(ok?'MIGRATED':'NOT_MIGRATED');`);
+      const migOut = execSync(`node "${migScript}"`, { env: { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome }, encoding: 'utf8' }).trim();
+      check('G2 D3: 账本在 cache/<hash版本>/ 能被迁移到集中目录(不再硬编码1.0.0)', migOut === 'MIGRATED');
+      try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch (e) {}
     } finally {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}

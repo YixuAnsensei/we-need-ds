@@ -3,6 +3,23 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.4 — 2026-09-04
+
+### Security
+- **Removed `test_upstream.js` from the repository** — the #34 experiment script hardcoded personal provider names and a relay domain, and at runtime read the local ledger to make real (billable) upstream calls. It contained no API keys (full git-history scan confirmed zero leaked secrets), but it leaked privacy. Moved out of the repo.
+
+### Fixed
+- **D1** — dead branch in ctl.js `on` output (`r.body && r.body.mode` was unreachable after the body was already unwrapped); now guards `interceptedList` with `Array.isArray`.
+- **D2** — `daemonCtl` deduplicated into `lib/state.js` as the single implementation (was copy-pasted in ctl.js and session-start.js). The UserPromptSubmit hook now re-hooks via `/ctl on` after reviving the daemon (daemon stays the single writer; direct `enableInterception` remains only as fallback when the daemon is unreachable), and the redundant restore→re-hook `recoverOrphans` churn was removed.
+- **D3** — `migrateLegacyFiles` no longer hardcodes the `1.0.0` cache path (which never matched the real `2.0.0`/hash dirs); it now scans every version directory under the cache root.
+- **D5** — removed the orphan `WE_NEED_DS_NO_REWRITE` env var that was set but never read anywhere.
+
+### Docs
+- README / README_EN: added a "Boundaries & Notes" section — ledger trust chain (providers must point at real upstreams, not another proxy), the two version lines (mechanism v5.1 vs plugin semver 2.1.x), and port-change behavior.
+
+### Tests
+- Added G1 (repeated `on` is idempotent, `originalUrl` never polluted with the proxy address) and G2 (ledger under `cache/<hash>/` migrates correctly). All three suites green (test_full 68 + simulation 18 + consume 18).
+
 ## v2.1.3 — 2026-09-04
 
 ### Fixed

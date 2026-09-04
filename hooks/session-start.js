@@ -1,33 +1,9 @@
 const { spawn } = require('child_process');
 const path = require('path');
-const http = require('http');
 const state = require('../lib/state.js');
 
 const PROXY_SCRIPT = path.join(__dirname, '..', 'proxy.js');
-
-function daemonCtl(port, action) {
-  return new Promise((resolve) => {
-    const req = http.request({
-      hostname: '127.0.0.1',
-      port,
-      path: '/ctl',
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      timeout: 4000
-    }, (res) => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => {
-        if (res.statusCode !== 200) { resolve({ reachable: false, status: res.statusCode }); return; }
-        try { resolve({ reachable: true, status: res.statusCode, body: JSON.parse(data) }); }
-        catch (e) { resolve({ reachable: false, status: res.statusCode }); }
-      });
-    });
-    req.on('error', () => resolve({ reachable: false }));
-    req.on('timeout', () => { req.destroy(); resolve({ reachable: false }); });
-    req.end(JSON.stringify({ action }));
-  });
-}
+const daemonCtl = state.daemonCtl;
 
 async function main() {
   const config = state.loadConfig();
