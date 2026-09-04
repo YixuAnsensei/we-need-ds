@@ -121,6 +121,7 @@ sequenceDiagram
 | **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, interception switch, hooked providers, and logs |
 | **`/we-need-ds:on`** | **Enable interception** | Hooks all providers; decision turns enter minimal simulation by default |
 | **`/we-need-ds:off`** | **Force disable & restore** | Restores all providers to their original upstream URLs |
+| **`/we-need-ds:restart`** | **Gracefully restart the daemon** | When the proxy is wedged (e.g. full of stalled upstream requests) or after a code update: kills the old process → spawns a fresh daemon → re-hooks providers from the ledger |
 
 ---
 
@@ -143,7 +144,10 @@ sequenceDiagram
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true,
-  "thinkingBudget": 0
+  "thinkingBudget": 0,
+  "upstreamRetries": 2,
+  "upstreamRetryBackoffMs": 500,
+  "upstreamFirstByteTimeoutMs": 30000
 }
 ```
 
@@ -158,6 +162,9 @@ sequenceDiagram
 | `executionDshPersona` | `true` | Whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns). |
 | `thinkingBudget` | `0` | Optional Anthropic extended-thinking budget on decision turns. Default `0` = off (no thinking field injected; relies on the model's native chain). A positive N injects `thinking: {type:"enabled", budget_tokens:N}` as an optional reinforcement for deep reasoning. |
 | `stripSystemPersona` | *(absent = on)* | Master persona-replacement switch. By default every DS-target request gets the DSH one-liner persona; set to `false` to disable persona replacement entirely (tool trimming still applies). |
+| `upstreamRetries` | `2` | Upstream retry count (excluding the first attempt, so 3 total tries by default). Retries on empty body, connection reset, 5xx, or first-byte timeout. **Only retried before any byte reaches the client** — once a streaming response has started forwarding it is never retried (avoids duplicated content). Set `0` to disable. |
+| `upstreamRetryBackoffMs` | `500` | Retry backoff base in ms, doubling per attempt (500→1000→…); takes the larger of this and the upstream `Retry-After` header when present. |
+| `upstreamFirstByteTimeoutMs` | `30000` | First-byte health gate timeout in ms. If the upstream returns no response body within this window after the request is sent (including "headers but no body" stalls), it is treated as a retryable failure and fails fast instead of hanging until the 120s socket timeout. |
 
 ---
 

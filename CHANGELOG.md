@@ -3,6 +3,21 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.7 — 2026-09-04
+
+### Fixed (upstream robustness — the real cause of empty/hanging responses)
+- **Upstream retry with exponential backoff** — the proxy previously forwarded a request to the upstream exactly once. When an unstable provider returned an empty body, reset the connection, or 5xx, the client (cc-haha / Claude Code) got a silent empty response or a hard error with no recovery. Now `forwardWithRetry` retries up to `upstreamRetries` (default 2, i.e. 3 attempts total) with exponential backoff (`upstreamRetryBackoffMs`, default 500ms), honoring the upstream `Retry-After` header when present. Only retried **before any byte is sent to the client** — once a streaming response has begun, it is never retried (avoids duplicated content).
+- **First-byte health gate (fixes the 120s hang)** — previously the proxy called `res.writeHead` + `pipe` the instant the upstream sent response headers, so an upstream that sent headers then stalled left the client hanging until the 120s socket timeout. Now a `upstreamFirstByteTimeoutMs` deadline (default 30s) starts the moment the request is sent and covers both "no response headers at all" and "headers but no body". A stalled/empty upstream now fails fast, retries, and returns a clear 502 instead of hanging the client.
+- **Empty-body detection** — an upstream `200` with zero-length body is treated as a retryable failure (not passed through as a malformed empty response).
+- **5xx passthrough preserved** — after retries are exhausted, a real upstream HTTP response (e.g. 500) is forwarded with its **original status code and body** (transparent-proxy semantics); only connection-level failures (reset/timeout/empty/stall) get a synthesized 502. Verified by A29 and the consume 5xx test.
+
+### Added
+- **`ctl restart`** — a graceful restart command (kill the daemon holding the port → wait for release → spawn a fresh daemon → if interception was enabled, re-hook via `/ctl on`). Previously there was no way to reload the daemon without manually killing the process; a wedged daemon (e.g. full of stalled upstream requests) could not be recovered cleanly.
+- New config keys: `upstreamRetries` (default 2), `upstreamRetryBackoffMs` (default 500), `upstreamFirstByteTimeoutMs` (default 30000).
+
+### Tests
+- Verified with fault-injection mock probes (`probe_robustness.js`, `probe_stream.js`): empty body → 502 after retries; stall → 502 in ~7s (was 120s hang); connection reset → 502; 500 → passthrough 500; flaky (empty,empty,ok) → recovered 200; streaming SSE → first byte 8ms, chunk-by-chunk, no buffering. All three suites green (test_full 70 + simulation 18 + consume 18).
+
 ## v2.1.6 — 2026-09-04
 
 ### Reverted

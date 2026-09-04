@@ -210,6 +210,146 @@ function processRequestBody(rawBody, reqUrl) {
   }
 }
 
+function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, firstByteTimeoutMs) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let gotFirst = false;
+    let proxyRes = null;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      try { if (ctx.proxyReq) ctx.proxyReq.destroy(); } catch (e) {}
+      reject(err);
+    };
+    const succeed = (chunk) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      resolve({ proxyRes, firstChunk: chunk });
+    };
+
+    const deadlineTimer = setTimeout(() => {
+      if (gotFirst) return;
+      gotFirst = true;
+      const err = new Error(`upstream first-byte timeout (${firstByteTimeoutMs}ms, no response body)`);
+      err.retryable = true;
+      fail(err);
+    }, firstByteTimeoutMs);
+
+    const onData = (chunk) => {
+      if (gotFirst) return;
+      gotFirst = true;
+      proxyRes.removeListener('data', onData);
+      proxyRes.removeListener('end', onEnd);
+      proxyRes.pause();
+      succeed(chunk);
+    };
+    const onEnd = () => {
+      if (gotFirst) return;
+      gotFirst = true;
+      proxyRes.removeListener('data', onData);
+      const err = new Error('upstream returned empty body');
+      err.retryable = true;
+      fail(err);
+    };
+
+    const req2 = transport.request(targetUrl, { method, headers }, (res) => {
+      proxyRes = res;
+      const status = res.statusCode;
+      const retryableStatus = status === 408 || status === 409 || status === 425 || status === 429 || (status >= 500 && status <= 599);
+      if (retryableStatus) {
+        gotFirst = true;
+        let bodyBuf = Buffer.alloc(0);
+        res.on('data', c => { bodyBuf = Buffer.concat([bodyBuf, c]); });
+        res.on('end', () => {
+          const err = new Error(`upstream ${status}`);
+          err.retryable = true;
+          err.retryAfter = res.headers['retry-after'];
+          err.upstreamResponse = { status, headers: res.headers, body: bodyBuf };
+          fail(err);
+        });
+        return;
+      }
+      if (method === 'HEAD' || status === 204 || status === 304) {
+        succeed(null);
+        return;
+      }
+      res.on('data', onData);
+      res.on('end', onEnd);
+      res.on('error', (e) => {
+        if (gotFirst) return;
+        gotFirst = true;
+        const err = new Error('upstream response error: ' + e.message);
+        err.retryable = true;
+        fail(err);
+      });
+    });
+    ctx.proxyReq = req2;
+
+    req2.setTimeout(120000, () => {
+      if (settled) { try { req2.destroy(); } catch (e) {} return; }
+      const err = new Error('upstream connect/socket timeout (120s)');
+      err.retryable = true;
+      fail(err);
+    });
+    req2.on('error', (e) => {
+      const err = new Error('upstream request error: ' + e.message);
+      err.retryable = true;
+      fail(err);
+    });
+
+    if (outgoingBuffer.length > 0) req2.write(outgoingBuffer);
+    req2.end();
+  });
+}
+
+async function forwardWithRetry(transport, targetUrl, method, headers, outgoingBuffer, res, ctx) {
+  const maxRetries = typeof config.upstreamRetries === 'number' ? config.upstreamRetries : 2;
+  const baseBackoff = typeof config.upstreamRetryBackoffMs === 'number' ? config.upstreamRetryBackoffMs : 500;
+  const fbTimeout = typeof config.upstreamFirstByteTimeoutMs === 'number' ? config.upstreamFirstByteTimeoutMs : 30000;
+  let attempt = 0;
+  while (true) {
+    try {
+      const { proxyRes, firstChunk } = await attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, fbTimeout);
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      if (firstChunk && firstChunk.length > 0) res.write(firstChunk);
+      proxyRes.pipe(res);
+      proxyRes.on('error', (err) => {
+        state.log(`upstream res error after first byte: ${targetUrl.href} -> ${err.message}`);
+        try { res.destroy(); } catch (e) {}
+      });
+      if (attempt > 0) state.log(`upstream recovered on attempt ${attempt + 1}: ${targetUrl.href}`);
+      return;
+    } catch (err) {
+      attempt++;
+      if (attempt > maxRetries) {
+        state.log(`upstream failed after ${attempt} attempts: ${targetUrl.href} -> ${err.message}`);
+        if (res.headersSent) {
+          try { res.destroy(); } catch (e) {}
+          return;
+        }
+        if (err.upstreamResponse) {
+          const ur = err.upstreamResponse;
+          res.writeHead(ur.status, ur.headers);
+          res.end(ur.body);
+          return;
+        }
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: `we-need-ds 上游经 ${attempt} 次尝试仍不可用 (${targetUrl.href}): ${err.message}` } }));
+        return;
+      }
+      let backoff = baseBackoff * Math.pow(2, attempt - 1);
+      if (err.retryAfter) {
+        const ra = parseInt(err.retryAfter, 10);
+        if (!isNaN(ra)) backoff = Math.max(backoff, ra * 1000);
+      }
+      state.log(`upstream attempt ${attempt} failed (${err.message}), retry in ${backoff}ms: ${targetUrl.href}`);
+      await new Promise(r => setTimeout(r, backoff));
+    }
+  }
+}
+
 const server = http.createServer((req, res) => {
   lastActiveTime = Date.now();
   activeRequests++;
@@ -289,41 +429,19 @@ const server = http.createServer((req, res) => {
       headers['content-length'] = outgoingBuffer.length;
     }
 
-    const proxyReq = transport.request(targetUrl, {
-      method: req.method,
-      headers: headers
-    }, (proxyRes) => {
-      res.writeHead(proxyRes.statusCode, proxyRes.headers);
-      proxyRes.pipe(res);
-      proxyRes.on('error', (err) => {
-        state.log(`upstream res error: ${upstreamBase}${req.url} -> ${err.message}`);
-        try { res.destroy(); } catch (e) {}
-      });
-    });
-
-    proxyReq.setTimeout(120000, () => {
-      state.log(`upstream timeout: ${upstreamBase}${req.url}`);
-      proxyReq.destroy(new Error('upstream timeout after 120s'));
-    });
-
-    proxyReq.on('error', (err) => {
-      if (!res.headersSent) {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: `we-need-ds 代理异常 (上游 ${upstreamBase}): ${err.message}` } }));
-      } else {
-        try { res.destroy(); } catch (e) {}
-      }
-    });
-
+    const ctx = {};
     res.on('error', (err) => {
       state.log(`client res error: ${req.url} -> ${err.message}`);
-      try { proxyReq.destroy(); } catch (e) {}
+      try { if (ctx.proxyReq) ctx.proxyReq.destroy(); } catch (e) {}
     });
 
-    if (outgoingBuffer.length > 0) {
-      proxyReq.write(outgoingBuffer);
-    }
-    proxyReq.end();
+    forwardWithRetry(transport, targetUrl, req.method, headers, outgoingBuffer, res, ctx)
+      .catch(err => {
+        state.log(`forwardWithRetry unexpected: ${req.url} -> ${err && err.message}`);
+        if (!res.headersSent) {
+          try { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: `we-need-ds 代理异常: ${err.message}` } })); } catch (e) {}
+        }
+      });
   });
 });
 

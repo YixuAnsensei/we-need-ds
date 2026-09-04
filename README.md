@@ -154,6 +154,7 @@ sequenceDiagram
 | **`/we-need-ds:status`** | **查看当前运行与拦截状态** | 查看当前代理进程、拦截开关、被接管的提供商清单与日志 |
 | **`/we-need-ds:on`** | **手动开启拦截环境** | 显式开启全量接管，判定轮常态进入极简模拟 |
 | **`/we-need-ds:off`** | **手动关闭拦截并还原端点** | 随时手动将所有 Provider 恢复到各自原有的真实地址 |
+| **`/we-need-ds:restart`** | **优雅重启代理 daemon** | 代理卡死（如被大量挂起的上游请求占满）或更新代码后需重载时：杀旧进程→拉起新 daemon→按账本自动重新接管 |
 
 ---
 
@@ -176,7 +177,10 @@ sequenceDiagram
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true,
-  "thinkingBudget": 0
+  "thinkingBudget": 0,
+  "upstreamRetries": 2,
+  "upstreamRetryBackoffMs": 500,
+  "upstreamFirstByteTimeoutMs": 30000
 }
 ```
 
@@ -191,6 +195,9 @@ sequenceDiagram
 | `executionDshPersona` | `true` | 执行轮（工具续跑）是否也同步切换为 DSH 极简人格。默认 `true`（全程 DSH 人格，仅工具集不同）；设为 `false` 则执行轮完全原样透传（保留 Claude Code 原始人格）。 |
 | `thinkingBudget` | `0` | 判定轮是否附带 Anthropic extended thinking 预算。默认 `0` = 关闭（不注入任何 thinking 字段，依赖模型原生思维链）；设为正数 N 则在判定轮请求中注入 `thinking: {type:"enabled", budget_tokens:N}`，作为触发深度推理链的可选增强手段。 |
 | `stripSystemPersona` | *(缺省=生效)* | 人格替换总开关。默认所有命中 DS 目标模型的请求都替换为 DSH 单行人格；显式设为 `false` 可完全关闭人格替换（仅保留工具裁切）。 |
+| `upstreamRetries` | `2` | 上游不稳定时的重试次数（不含首次，默认共 3 次尝试）。上游返回空 body、连接被重置、5xx、或首字节超时时自动重试；**仅在尚未向客户端吐出任何字节前重试**，流式响应一旦开始转发就不再重试（避免内容重复）。设为 `0` 关闭重试。 |
+| `upstreamRetryBackoffMs` | `500` | 重试退避基数（毫秒），按 2 的幂递增（500→1000→…）；若上游返回 `Retry-After` 头则取两者较大值。 |
+| `upstreamFirstByteTimeoutMs` | `30000` | 首字节健康门超时（毫秒）。请求发出后若上游在此时间内未返回任何响应体（含"只发头不发体"的挂起），判定为可重试失败，快速失败而非拖到 120s 硬超时。 |
 
 ---
 
