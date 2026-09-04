@@ -3,6 +3,11 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.6 — 2026-09-04
+
+### Reverted
+- **Reverted the v2.1.4 "D2" hook-path change** — v2.1.4 had consolidated `daemonCtl` into `lib/state.js` and switched the UserPromptSubmit hook to re-hook via `/ctl on` (dropping the `recoverOrphans` → `enableInterception` sequence). That rewrote the lifecycle takeover path that was validated end-to-end in real use (kill daemon → hook revives and re-hooks 27 providers). The new path only passed unit tests, not real-world use, and the "restore → re-hook" step was an intentional robustness measure. Restored to the original structure: `user-prompt-submit.js` and `session-start.js` back to their pre-D2 form (local `daemonCtl`, `recoverOrphans` + `enableInterception`), and `daemonCtl` removed from `lib/state.js`. The D1/D3/D5 cleanups from v2.1.4 are kept (they touch only console output, a dead migration path, and an orphan env var — none affect the takeover/passthrough path).
+
 ## v2.1.5 — 2026-09-04
 
 ### Fixed

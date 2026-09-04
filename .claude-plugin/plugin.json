@@ -1,6 +1,6 @@
 {
   "name": "we-need-ds",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "Unlock full-power 'We need' reasoning chains for DeepSeek Pro models in Claude Code: every decision turn simulates the official DSH minimal mode (one-line persona + Bash/Edit pair), execution turns keep full MCP tools with DSH persona.",
   "author": {
     "name": "YixuAn",
