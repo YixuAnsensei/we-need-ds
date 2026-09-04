@@ -343,12 +343,15 @@ async function main() {
     check('E1 所有非DS模型带CC人格+工具仍字节级原样透传 (安全底线)', nonDsAllPass);
 
     const anthNoSystem = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hi' }], tools: [{ name: 'Bash' }, { name: 'Edit' }, { name: 'X' }] });
-    const outAnth = JSON.parse(prbE(anthNoSystem));
-    check('E2 M1: Anthropic无system判定轮→用顶层system字段(不插非法system消息)', Array.isArray(outAnth.system) && outAnth.system[0].text === 'You are a helpful software engineer assistant.' && !(outAnth.messages || []).some(m => m.role === 'system'));
+    const outAnth = JSON.parse(prbE(anthNoSystem, '/v1/messages'));
+    check('E2 M1: Anthropic路径无system→用顶层system字段(不插非法system消息)', Array.isArray(outAnth.system) && outAnth.system[0].text === 'You are a helpful software engineer assistant.' && !(outAnth.messages || []).some(m => m.role === 'system'));
 
     const openAiNoSystem = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'assistant', content: 'x', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] }, { role: 'tool', content: 'out', tool_call_id: '1' }], tools: [{ type: 'function', function: { name: 'Bash' } }] });
-    const outOai = JSON.parse(prbE(openAiNoSystem));
-    check('E3 M1: OpenAI无system执行轮→插system消息(合法)', (outOai.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.'));
+    const outOai = JSON.parse(prbE(openAiNoSystem, '/v1/chat/completions'));
+    check('E3 M1: OpenAI路径无system执行轮→插system消息(合法)', (outOai.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.'));
+
+    const outDefaultOai = JSON.parse(prbE(anthNoSystem));
+    check('E5 A1: 无路径+无system字段→默认OpenAI(注入messages system)', (outDefaultOai.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.') && !Array.isArray(outDefaultOai.system));
 
     const mixedTr = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'o' }, { type: 'text', text: '<system-reminder>warn</system-reminder>' }] }] };
     check('E4 M3: tool_result+文本混合仍判执行轮(不误砍进行中的工具链)', itf(mixedTr) === true);
@@ -385,6 +388,20 @@ async function main() {
       state.enableInterception(cfgF2);
       const afterB1 = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
       check('F9 B1: 运行中改端口→旧代理地址provider先还原再按新端口接管(不记成真实上游)', afterB1.providers[0].baseUrl.includes('21329') && state.readState().providers.f1.originalUrl === 'https://api.deepseek.com/anthropic');
+
+      const provHide = state.PROVIDERS_PATH + '.envtest-hide';
+      const hadProvForEnv = fs.existsSync(state.PROVIDERS_PATH);
+      if (hadProvForEnv) fs.renameSync(state.PROVIDERS_PATH, provHide);
+      try {
+        const prevEnv = process.env.ANTHROPIC_UPSTREAM_BASE_URL;
+        process.env.ANTHROPIC_UPSTREAM_BASE_URL = 'http://127.0.0.1:2100';
+        state.enableInterception(cfgF2);
+        check('F10 env遮蔽修复: 纯CC模式设了ANTHROPIC_UPSTREAM_BASE_URL→defaultUpstream用env而非硬编码20128', state.readState().defaultUpstream === 'http://127.0.0.1:2100');
+        if (prevEnv === undefined) delete process.env.ANTHROPIC_UPSTREAM_BASE_URL; else process.env.ANTHROPIC_UPSTREAM_BASE_URL = prevEnv;
+      } finally {
+        if (hadProvForEnv) fs.renameSync(provHide, state.PROVIDERS_PATH);
+        else { try { fs.unlinkSync(provHide); } catch (e) {} }
+      }
     } finally {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}

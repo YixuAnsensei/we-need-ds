@@ -102,16 +102,6 @@ function shouldFilterTools(body) {
 
 const DSH_MINIMAL_PROMPT = 'You are a helpful software engineer assistant.';
 
-function isOpenAiStyle(body) {
-  if (!Array.isArray(body.messages)) return false;
-  return body.messages.some(m => {
-    if (m.role === 'system') return true;
-    if (m.role === 'tool') return true;
-    if (m.role === 'assistant' && Array.isArray(m.tool_calls)) return true;
-    return false;
-  });
-}
-
 function formatFromRequestPath(reqUrl) {
   if (!reqUrl) return null;
   const p = reqUrl.split('?')[0].toLowerCase();
@@ -130,7 +120,7 @@ function applyDshMinimalSystem(body, format) {
   let openAiStyle;
   if (format === 'openai') openAiStyle = true;
   else if (format === 'anthropic') openAiStyle = false;
-  else openAiStyle = body.system === undefined && isOpenAiStyle(body);
+  else openAiStyle = body.system === undefined;
   if (Array.isArray(body.messages)) {
     body.messages = body.messages.filter(m => m.role !== 'system');
   }
