@@ -354,6 +354,14 @@ async function main() {
     const outDefaultOai = JSON.parse(prbE(anthNoSystem));
     check('E5 A1: 无路径+无system字段→默认OpenAI(注入messages system)', (outDefaultOai.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.') && !Array.isArray(outDefaultOai.system));
 
+    const openAiExecWithTopSystem = JSON.stringify({ model: 'deepseek-v4-pro', system: [{ type: 'text', text: 'You are Claude Code' }], messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: 'x', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] }, { role: 'tool', content: 'o', tool_call_id: '1' }], tools: [{ type: 'function', function: { name: 'Bash' } }] });
+    const outExecTopSys = JSON.parse(prbE(openAiExecWithTopSystem, '/v1/chat/completions'));
+    check('E8 OpenAI执行轮带顶层system→删除残留顶层字段(DSH只留messages内,不双份人格)', outExecTopSys.system === undefined && (outExecTopSys.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.'));
+
+    const dsMalformedTurn = JSON.stringify({ model: 'deepseek-v4-pro', system: [{ type: 'text', text: 'You are Claude Code' }], messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: 'done' }], tools: [{ name: 'Bash' }, { name: 'Edit' }, { name: 'X' }] });
+    const outMalformed = JSON.parse(prbE(dsMalformedTurn, '/v1/messages'));
+    check('E9 DS模型任何轮次(含末条assistant畸形轮)都替换DSH人格,非判定轮不裁工具', outMalformed.system[0].text === 'You are a helpful software engineer assistant.' && outMalformed.tools.length === 3);
+
     const proxyMod = require('./proxy.js');
     const prevBudget = proxyMod.config.thinkingBudget;
     proxyMod.config.thinkingBudget = 1000;

@@ -3,6 +3,15 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.5 — 2026-09-04
+
+### Fixed
+- **DS persona now applies on every turn** — previously the DSH one-line persona was only swapped on decision turns and execution turns (last message is `user`/`tool`). A DS request whose last message is `assistant` (a malformed/edge turn) fell through to byte-for-byte passthrough, keeping the original CC persona. Now any DS-target request with a non-empty `messages` array gets the persona swap regardless of turn shape (tool trimming still only happens on decision turns). This makes "DeepSeek models always keep the DSH persona" hold unconditionally.
+- **OpenAI-style execution turn no longer leaves a stale top-level `system` field** — when an OpenAI-format request carried a top-level `system` field, the DSH persona was injected as a `messages` system entry but the original top-level `system` was not removed, producing a double persona. Now `delete body.system` in the OpenAI branch.
+
+### Tests
+- Added E8 (OpenAI execution turn drops the stale top-level system) and E9 (DS malformed turn — last message `assistant` — still gets the DSH persona, tools not trimmed). All three suites green (test_full 70 + simulation 18 + consume 18).
+
 ## v2.1.4 — 2026-09-04
 
 ### Security

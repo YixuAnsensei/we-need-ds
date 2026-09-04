@@ -127,6 +127,7 @@ function applyDshMinimalSystem(body, openAiStyle) {
     body.messages = body.messages.filter(m => m.role !== 'system');
   }
   if (openAiStyle) {
+    delete body.system;
     body.messages = [{ role: 'system', content: DSH_MINIMAL_PROMPT }, ...(body.messages || [])];
   } else {
     body.system = [{ type: 'text', text: DSH_MINIMAL_PROMPT, cache_control: { type: 'ephemeral' } }];
@@ -176,8 +177,8 @@ function processRequestBody(rawBody, reqUrl) {
     const isExecution = isToolFollowup(body);
     if (isDeepSeekProModel(body && body.model) && Array.isArray(body && body.messages) && body.messages.length > 0) {
       if (isExecution) {
-          if (shouldApplyMinimalPersona(body, true)) {
-            applyDshMinimalSystem(body, openAiStyle);
+        if (shouldApplyMinimalPersona(body, true)) {
+          applyDshMinimalSystem(body, openAiStyle);
           return JSON.stringify(body);
         }
         return rawBody;
@@ -196,6 +197,10 @@ function processRequestBody(rawBody, reqUrl) {
           applyDshMinimalSystem(body, openAiStyle);
         }
         if (!openAiStyle) applyThinkingBudget(body);
+        return JSON.stringify(body);
+      }
+      if (shouldApplyMinimalPersona(body, true)) {
+        applyDshMinimalSystem(body, openAiStyle);
         return JSON.stringify(body);
       }
     }
