@@ -353,6 +353,43 @@ async function main() {
     const mixedTr = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'o' }, { type: 'text', text: '<system-reminder>warn</system-reminder>' }] }] };
     check('E4 M3: tool_result+文本混合仍判执行轮(不误砍进行中的工具链)', itf(mixedTr) === true);
 
+    console.log('===== Phase F: A1 URL前缀/路径格式判定 + A2 原子写 + B1 端口变更 =====');
+    const { buildTargetUrl, formatFromRequestPath, processRequestBody: prbF } = require('./proxy.js');
+    check('F1 A1: baseUrl带/anthropic前缀转发保留前缀', buildTargetUrl('https://api.deepseek.com/anthropic', '/v1/messages').href === 'https://api.deepseek.com/anthropic/v1/messages');
+    check('F2 A1: baseUrl无前缀不受影响', buildTargetUrl('https://api.yjs.im', '/v1/chat/completions').href === 'https://api.yjs.im/v1/chat/completions');
+    check('F3 A1: query string 保留', buildTargetUrl('https://api.deepseek.com/anthropic', '/v1/messages?stream=1').href === 'https://api.deepseek.com/anthropic/v1/messages?stream=1');
+    check('F4 A1: 路径判定 /messages=anthropic /chat/completions=/responses=openai', formatFromRequestPath('/v1/messages') === 'anthropic' && formatFromRequestPath('/v1/chat/completions') === 'openai' && formatFromRequestPath('/v1/responses') === 'openai');
+    const oaiBodyAnthPath = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'x', tool_calls: [{ id: '1', type: 'function', function: { name: 'Bash' } }] }, { role: 'tool', content: 'o', tool_call_id: '1' }], tools: [{ type: 'function', function: { name: 'Bash' } }] });
+    const outF5 = JSON.parse(prbF(oaiBodyAnthPath, '/v1/messages'));
+    check('F5 A1: 路径=/v1/messages 强制anthropic顶层system(路径强于body特征)', Array.isArray(outF5.system) && !(outF5.messages || []).some(m => m.role === 'system'));
+    const plainBodyOaiPath = JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hi' }], tools: [{ type: 'function', function: { name: 'Bash' } }] });
+    const outF6 = JSON.parse(prbF(plainBodyOaiPath, '/v1/chat/completions'));
+    check('F6 A1: 路径=/v1/chat/completions 强制openai注入system消息', (outF6.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.'));
+
+    const provBakF = state.PROVIDERS_PATH + '.phaseF-bak';
+    const hadProvF = fs.existsSync(state.PROVIDERS_PATH);
+    if (hadProvF) fs.copyFileSync(state.PROVIDERS_PATH, provBakF);
+    try {
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({ activeId: 'f1', providers: [{ id: 'f1', name: 'F前缀', baseUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-f', models: { a: 'deepseek-v4-pro' } }] }, null, 2));
+      const cfgF = state.loadConfig(); cfgF.port = 21329;
+      state.enableInterception(cfgF);
+      const afterOn = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      check('F7 A2: writeProviders 产出合法JSON且无残留tmp', afterOn.providers[0].baseUrl.includes('21329') && !fs.readdirSync(require('path').dirname(state.PROVIDERS_PATH)).some(f => f.startsWith('providers.json.') && f.endsWith('.tmp')));
+      state.disableInterception(cfgF);
+      const afterOff = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      check('F8 A1: off还原保留完整前缀URL', afterOff.providers[0].baseUrl === 'https://api.deepseek.com/anthropic');
+
+      state.writeState({ enabled: true, proxyUrl: 'http://127.0.0.1:20329', providers: { f1: { name: 'F前缀', originalUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-f' } }, keyMap: {}, defaultUpstream: null });
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({ activeId: 'f1', providers: [{ id: 'f1', name: 'F前缀', baseUrl: 'http://127.0.0.1:20329', apiKey: 'sk-f', models: { a: 'deepseek-v4-pro' } }] }, null, 2));
+      const cfgF2 = state.loadConfig(); cfgF2.port = 21329;
+      state.enableInterception(cfgF2);
+      const afterB1 = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      check('F9 B1: 运行中改端口→旧代理地址provider先还原再按新端口接管(不记成真实上游)', afterB1.providers[0].baseUrl.includes('21329') && state.readState().providers.f1.originalUrl === 'https://api.deepseek.com/anthropic');
+    } finally {
+      if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
+      try { fs.unlinkSync(provBakF); } catch (e) {}
+    }
+
     upstreamMain.close();
     upstreamSecond.close();
   } finally {

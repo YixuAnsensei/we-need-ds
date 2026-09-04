@@ -34,9 +34,11 @@ function resolveTargetBaseUrl(req) {
 }
 
 let lastActiveTime = Date.now();
+let activeRequests = 0;
 
 setInterval(() => {
   if (config.idleAutoShutdownMinutes > 0) {
+    if (activeRequests > 0) return;
     const idleMs = Date.now() - lastActiveTime;
     if (idleMs > config.idleAutoShutdownMinutes * 60 * 1000) {
       const r = state.disableInterception(config);
@@ -110,8 +112,25 @@ function isOpenAiStyle(body) {
   });
 }
 
-function applyDshMinimalSystem(body) {
-  const openAiStyle = body.system === undefined && isOpenAiStyle(body);
+function formatFromRequestPath(reqUrl) {
+  if (!reqUrl) return null;
+  const p = reqUrl.split('?')[0].toLowerCase();
+  if (p.includes('/messages')) return 'anthropic';
+  if (p.includes('/chat/completions') || p.includes('/responses') || p.includes('/completions')) return 'openai';
+  return null;
+}
+
+function buildTargetUrl(upstreamBase, reqUrl) {
+  const base = new URL(upstreamBase);
+  const basePath = base.pathname.replace(/\/+$/, '');
+  return new URL(basePath + reqUrl, base.origin);
+}
+
+function applyDshMinimalSystem(body, format) {
+  let openAiStyle;
+  if (format === 'openai') openAiStyle = true;
+  else if (format === 'anthropic') openAiStyle = false;
+  else openAiStyle = body.system === undefined && isOpenAiStyle(body);
   if (Array.isArray(body.messages)) {
     body.messages = body.messages.filter(m => m.role !== 'system');
   }
@@ -156,15 +175,16 @@ function applyThinkingBudget(body) {
   return body;
 }
 
-function processRequestBody(rawBody) {
+function processRequestBody(rawBody, reqUrl) {
   try {
     const body = JSON.parse(rawBody);
 
+    const format = formatFromRequestPath(reqUrl);
     const isExecution = isToolFollowup(body);
     if (isDeepSeekProModel(body && body.model) && Array.isArray(body && body.messages) && body.messages.length > 0) {
       if (isExecution) {
           if (shouldApplyMinimalPersona(body, true)) {
-            applyDshMinimalSystem(body);
+            applyDshMinimalSystem(body, format);
           return JSON.stringify(body);
         }
         return rawBody;
@@ -180,7 +200,7 @@ function processRequestBody(rawBody) {
           });
         }
         if (shouldApplyMinimalPersona(body, false)) {
-          applyDshMinimalSystem(body);
+          applyDshMinimalSystem(body, format);
         }
         applyThinkingBudget(body);
         return JSON.stringify(body);
@@ -194,6 +214,8 @@ function processRequestBody(rawBody) {
 
 const server = http.createServer((req, res) => {
   lastActiveTime = Date.now();
+  activeRequests++;
+  res.on('close', () => { activeRequests--; });
 
   if (req.url === '/health-check') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -231,7 +253,7 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ error: { message: 'we-need-ds 无法确定该请求的真实上游地址（apiKey 未在账本中、且无 defaultUpstream/环境变量兜底），已拒绝以避免错发到其他服务商。请重新开启拦截或检查 provider 配置。' } }));
     return;
   }
-  const targetUrl = new URL(req.url, upstreamBase);
+  const targetUrl = buildTargetUrl(upstreamBase, req.url);
   const isHttps = targetUrl.protocol === 'https:';
   const transport = isHttps ? https : http;
 
@@ -250,7 +272,7 @@ const server = http.createServer((req, res) => {
 
     if (req.method === 'POST' && rawBuffer.length > 0 && !isCompressed) {
       const rawBody = rawBuffer.toString('utf8');
-      const processed = processRequestBody(rawBody);
+      const processed = processRequestBody(rawBody, req.url);
       if (processed !== rawBody) {
         outgoingBuffer = Buffer.from(processed, 'utf8');
         state.log(`decision turn DSH-minimal: ${req.url} -> upstream: ${upstreamBase}`);
@@ -330,4 +352,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, isToolFollowup, resolveTargetBaseUrl, config };
+module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, isToolFollowup, resolveTargetBaseUrl, formatFromRequestPath, buildTargetUrl, config };
