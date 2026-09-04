@@ -6,7 +6,7 @@ const config = state.loadConfig();
 
 function isSelfProxyUrl(url) {
   if (!url) return false;
-  return url.includes(`:${config.port}`) || url.includes(`:${config.port}/`) || url.includes('127.0.0.1:20329') || url.includes('localhost:20329');
+  return url.includes(`:${config.port}`) || url.includes(`:${config.port}/`);
 }
 
 function resolveTargetBaseUrl(req) {
@@ -210,7 +210,7 @@ function processRequestBody(rawBody, reqUrl) {
   }
 }
 
-function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, firstByteTimeoutMs) {
+function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, headerTimeoutMs, bodyTimeoutMs, idleTimeoutMs) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let gotFirst = false;
@@ -218,24 +218,26 @@ function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, 
     const fail = (err) => {
       if (settled) return;
       settled = true;
-      clearTimeout(deadlineTimer);
+      clearTimeout(headerTimer);
+      clearTimeout(bodyTimer);
       try { if (ctx.proxyReq) ctx.proxyReq.destroy(); } catch (e) {}
       reject(err);
     };
     const succeed = (chunk) => {
       if (settled) return;
       settled = true;
-      clearTimeout(deadlineTimer);
+      clearTimeout(headerTimer);
+      clearTimeout(bodyTimer);
       resolve({ proxyRes, firstChunk: chunk });
     };
 
-    const deadlineTimer = setTimeout(() => {
-      if (gotFirst) return;
-      gotFirst = true;
-      const err = new Error(`upstream first-byte timeout (${firstByteTimeoutMs}ms, no response body)`);
+    let bodyTimer = null;
+    const headerTimer = setTimeout(() => {
+      if (proxyRes) return;
+      const err = new Error(`upstream header timeout (${headerTimeoutMs}ms, no response headers)`);
       err.retryable = true;
       fail(err);
-    }, firstByteTimeoutMs);
+    }, headerTimeoutMs);
 
     const onData = (chunk) => {
       if (gotFirst) return;
@@ -256,6 +258,7 @@ function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, 
 
     const req2 = transport.request(targetUrl, { method, headers }, (res) => {
       proxyRes = res;
+      clearTimeout(headerTimer);
       const status = res.statusCode;
       const retryableStatus = status === 408 || status === 409 || status === 425 || status === 429 || (status >= 500 && status <= 599);
       if (retryableStatus) {
@@ -275,6 +278,15 @@ function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, 
         succeed(null);
         return;
       }
+      const isStreaming = /text\/event-stream/i.test(res.headers['content-type'] || '');
+      if (!isStreaming) {
+        bodyTimer = setTimeout(() => {
+          if (gotFirst) return;
+          const err = new Error(`upstream stalled after headers (${bodyTimeoutMs}ms, no body bytes)`);
+          err.retryable = true;
+          fail(err);
+        }, bodyTimeoutMs);
+      }
       res.on('data', onData);
       res.on('end', onEnd);
       res.on('error', (e) => {
@@ -287,9 +299,9 @@ function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, 
     });
     ctx.proxyReq = req2;
 
-    req2.setTimeout(120000, () => {
+    req2.setTimeout(idleTimeoutMs, () => {
       if (settled) { try { req2.destroy(); } catch (e) {} return; }
-      const err = new Error('upstream connect/socket timeout (120s)');
+      const err = new Error(`upstream socket idle timeout (${idleTimeoutMs}ms, no activity)`);
       err.retryable = true;
       fail(err);
     });
@@ -307,11 +319,13 @@ function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, 
 async function forwardWithRetry(transport, targetUrl, method, headers, outgoingBuffer, res, ctx) {
   const maxRetries = typeof config.upstreamRetries === 'number' ? config.upstreamRetries : 2;
   const baseBackoff = typeof config.upstreamRetryBackoffMs === 'number' ? config.upstreamRetryBackoffMs : 500;
-  const fbTimeout = typeof config.upstreamFirstByteTimeoutMs === 'number' ? config.upstreamFirstByteTimeoutMs : 30000;
+  const headerTimeout = typeof config.upstreamHeaderTimeoutMs === 'number' ? config.upstreamHeaderTimeoutMs : 30000;
+  const bodyTimeout = typeof config.upstreamBodyTimeoutMs === 'number' ? config.upstreamBodyTimeoutMs : 30000;
+  const idleTimeout = typeof config.upstreamIdleTimeoutMs === 'number' ? config.upstreamIdleTimeoutMs : 600000;
   let attempt = 0;
   while (true) {
     try {
-      const { proxyRes, firstChunk } = await attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, fbTimeout);
+      const { proxyRes, firstChunk } = await attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, headerTimeout, bodyTimeout, idleTimeout);
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       if (firstChunk && firstChunk.length > 0) res.write(firstChunk);
       proxyRes.pipe(res);
@@ -369,7 +383,7 @@ const server = http.createServer((req, res) => {
       try { action = (JSON.parse(Buffer.concat(ctlChunks).toString('utf8')) || {}).action || ''; } catch (e) {}
       let result;
       if (action === 'on') {
-        result = state.enableInterception(config, { arm: true });
+        result = state.enableInterception(config);
       } else if (action === 'off') {
         result = state.disableInterception(config);
       } else if (action === 'arm') {

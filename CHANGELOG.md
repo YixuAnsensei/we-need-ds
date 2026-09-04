@@ -3,6 +3,20 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.8 — 2026-09-04
+
+### Fixed (first-byte gate no longer kills slow-thinking streams)
+- **The v2.1.7 "first-byte health gate" could falsely kill legitimate slow first tokens** — its single `upstreamFirstByteTimeoutMs` deadline (default 30s) started at request-send and covered *both* "no response headers" *and* "headers arrived but no body byte". Reasoning models (deepseek-v4-pro) can take well over 30s before their first output token, so a healthy-but-slow stream would be retried and eventually 502'd. Replaced with **three independent gates**:
+  - `upstreamHeaderTimeoutMs` (default 30s) — connection-level stall: no response headers at all → retryable.
+  - `upstreamBodyTimeoutMs` (default 30s) — **non-streaming only**: headers arrived but zero body bytes → retryable. **Streaming (`text/event-stream`) responses are exempt** — once headers arrive the proxy waits indefinitely for the first byte, so a slow-thinking stream is never killed.
+  - `upstreamIdleTimeoutMs` (default 600s) — socket idle: no activity on the connection for this long → dead, destroyed (raised from the old hard-coded 120s to cover long silent thinking stretches).
+  Empty-body detection and 5xx passthrough from v2.1.7 are preserved.
+- **Hard-coded proxy port removed from `isSelfProxyUrl`** (both `proxy.js` and `lib/state.js`) — the redundant `127.0.0.1:20329` / `localhost:20329` literals meant that if the real upstream happened to live on the default port while the proxy ran on a different one, it was misjudged as "another proxy" and skipped. Now only the dynamic `:${config.port}` check remains. Regression test F11.
+- **Dead `{ arm: true }` argument** dropped from the `/ctl on` handler (`enableInterception` never took a second parameter).
+
+### Tests
+- New **Phase H** (test_full): an isolated small-timeout daemon proves a streaming response whose first byte arrives *after* the body gate is **not** killed (H1), while a non-streaming "headers-but-no-body" stall still fails fast as 502 (H2). Probe `probe_robustness.js` gained a `/slowstream` case (flushed headers + 5s-delayed first SSE chunk) — passes through intact while `/stall` still 502s in ~7s. All three suites green (test_full 74 + simulation 18 + consume 18).
+
 ## v2.1.7 — 2026-09-04
 
 ### Fixed (upstream robustness — the real cause of empty/hanging responses)

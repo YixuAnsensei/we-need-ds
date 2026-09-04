@@ -93,7 +93,9 @@ function killDaemon() {
   } catch (e) {}
 }
 function spawnDaemon(extraEnv) {
-  spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore', env: { ...process.env, ...(extraEnv || {}), WE_NEED_DS_TEST_PORT: '21329' } }).unref();
+  const child = spawn(process.execPath, [path.join(__dirname, 'proxy.js')], { detached: true, stdio: 'ignore', env: { ...process.env, WE_NEED_DS_TEST_PORT: '21329', ...(extraEnv || {}) } });
+  child.unref();
+  return child;
 }
 
 const bashTool = { type: 'function', function: { name: 'Bash', parameters: { type: 'object' } } };
@@ -424,6 +426,14 @@ async function main() {
         else { try { fs.unlinkSync(provHide); } catch (e) {} }
       }
 
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({ activeId: 'h1', providers: [{ id: 'h1', name: 'H真实20329', baseUrl: 'http://127.0.0.1:20329', apiKey: 'sk-h', models: { a: 'deepseek-v4-pro' } }] }, null, 2));
+      const cfgH = state.loadConfig(); cfgH.port = 21329;
+      state.enableInterception(cfgH);
+      const afterH = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      const stH = state.readState();
+      check('F11 硬编码根治: 端口改21329时真实上游恰在20329的provider被正确接管(20329记为真实上游而非误判为代理)', afterH.providers[0].baseUrl.includes('21329') && stH.providers.h1 && stH.providers.h1.originalUrl === 'http://127.0.0.1:20329');
+
       console.log('===== Phase G: D2 幂等重接管 + D3 迁移扫描 cache 版本目录 =====');
 
       fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({ activeId: 'g1', providers: [{ id: 'g1', name: 'G幂等', baseUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-g', models: { a: 'deepseek-v4-pro' } }] }, null, 2));
@@ -447,6 +457,60 @@ async function main() {
       const migOut = execSync(`node "${migScript}"`, { env: { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome }, encoding: 'utf8' }).trim();
       check('G2 D3: 账本在 cache/<hash版本>/ 能被迁移到集中目录(不再硬编码1.0.0)', migOut === 'MIGRATED');
       try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch (e) {}
+
+      console.log('===== Phase H: 首字节门三段语义(流式慢首字不误杀/非流式stall快速失败) =====');
+      const H_PORT = 21330;
+      const H_MOCK = 21901;
+      const cfgH0 = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
+      cfgH0.targetBaseUrl = `http://127.0.0.1:${H_MOCK}`;
+      cfgH0.upstreamHeaderTimeoutMs = 5000;
+      cfgH0.upstreamBodyTimeoutMs = 500;
+      cfgH0.upstreamRetries = 0;
+      cfgH0.upstreamRetryBackoffMs = 100;
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgH0, null, 2));
+      const hMock = http.createServer((req, res) => {
+        let data = '';
+        req.on('data', c => data += c);
+        req.on('end', () => {
+          if (req.url.includes('/slowstream')) {
+            res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+            res.flushHeaders();
+            setTimeout(() => res.write('data: slow-first-token\n\n'), 1500);
+            setTimeout(() => res.end('data: [DONE]\n\n'), 1700);
+            return;
+          }
+          if (req.url.includes('/stall')) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.flushHeaders();
+            return;
+          }
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end('{"ok":true}');
+        });
+      });
+      await new Promise(r => hMock.listen(H_MOCK, '127.0.0.1', r));
+      const hUpstream = `http://127.0.0.1:${H_MOCK}`;
+      const spawnedH = spawnDaemon({ WE_NEED_DS_TEST_PORT: String(H_PORT) });
+      let hUp = false;
+      for (let i = 0; i < 25; i++) { await new Promise(r => setTimeout(r, 200)); if (await state.isProxyRunning(H_PORT)) { hUp = true; break; } }
+      check('H0 独立小超时 daemon 拉起', hUp);
+      const hPost = (p) => new Promise((resolve) => {
+        const t0 = Date.now();
+        const req = http.request({ hostname: '127.0.0.1', port: H_PORT, path: p, method: 'POST', headers: { 'content-type': 'application/json', 'x-api-key': 'sk-h' }, timeout: 10000 }, (res) => {
+          let d = '';
+          res.on('data', c => d += c);
+          res.on('end', () => resolve({ status: res.statusCode, body: d, ms: Date.now() - t0 }));
+        });
+        req.on('error', e => resolve({ status: 0, body: '', err: e.message, ms: Date.now() - t0 }));
+        req.end(JSON.stringify({ model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 'hi' }] }));
+      });
+      const slow = await hPost('/v1/messages/slowstream');
+      check('H1 流式慢首字(1.5s>body门500ms)不被误杀,完整透传', slow.status === 200 && slow.body.includes('slow-first-token') && slow.body.includes('[DONE]'));
+      const stalled = await hPost('/v1/messages/stall');
+      check('H2 非流式stall(头到齐body永不到)仍被快速识别为502', stalled.status === 502 && stalled.ms < 3000);
+      try { process.kill(-spawnedH.pid); } catch (e) { try { spawnedH.kill(); } catch (e2) {} }
+      hMock.close();
+      fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgH0, null, 2));
     } finally {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}

@@ -147,7 +147,9 @@ sequenceDiagram
   "thinkingBudget": 0,
   "upstreamRetries": 2,
   "upstreamRetryBackoffMs": 500,
-  "upstreamFirstByteTimeoutMs": 30000
+  "upstreamHeaderTimeoutMs": 30000,
+  "upstreamBodyTimeoutMs": 30000,
+  "upstreamIdleTimeoutMs": 600000
 }
 ```
 
@@ -162,9 +164,11 @@ sequenceDiagram
 | `executionDshPersona` | `true` | Whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns). |
 | `thinkingBudget` | `0` | Optional Anthropic extended-thinking budget on decision turns. Default `0` = off (no thinking field injected; relies on the model's native chain). A positive N injects `thinking: {type:"enabled", budget_tokens:N}` as an optional reinforcement for deep reasoning. |
 | `stripSystemPersona` | *(absent = on)* | Master persona-replacement switch. By default every DS-target request gets the DSH one-liner persona; set to `false` to disable persona replacement entirely (tool trimming still applies). |
-| `upstreamRetries` | `2` | Upstream retry count (excluding the first attempt, so 3 total tries by default). Retries on empty body, connection reset, 5xx, or first-byte timeout. **Only retried before any byte reaches the client** — once a streaming response has started forwarding it is never retried (avoids duplicated content). Set `0` to disable. |
+| `upstreamRetries` | `2` | Upstream retry count (excluding the first attempt, so 3 total tries by default). Retries on empty body, connection reset, 5xx, or timeout (see the three gates below). **Only retried before any byte reaches the client** — once a streaming response has started forwarding it is never retried (avoids duplicated content). Set `0` to disable. |
 | `upstreamRetryBackoffMs` | `500` | Retry backoff base in ms, doubling per attempt (500→1000→…); takes the larger of this and the upstream `Retry-After` header when present. |
-| `upstreamFirstByteTimeoutMs` | `30000` | First-byte health gate timeout in ms. If the upstream returns no response body within this window after the request is sent (including "headers but no body" stalls), it is treated as a retryable failure and fails fast instead of hanging until the 120s socket timeout. |
+| `upstreamHeaderTimeoutMs` | `30000` | **Header timeout** in ms. If the upstream doesn't even return response headers within this window after the request is sent (connection-level stall), it is treated as a retryable failure and fails fast instead of hanging until the socket timeout. |
+| `upstreamBodyTimeoutMs` | `30000` | **Non-streaming body timeout** in ms. Applies only to non-streaming responses (`Content-Type` is not `text/event-stream`): headers arrived but not a single body byte within this window ("headers but no body" stall) is treated as a retryable failure. **Streaming responses are exempt from this gate** — reasoning models (e.g. deepseek-v4-pro) can legitimately take tens of seconds or more before the first token; once headers arrive the proxy waits indefinitely for the first byte and never kills a slow-thinking stream. |
+| `upstreamIdleTimeoutMs` | `600000` | **Socket idle timeout** in ms. An upstream connection with no activity for this long is considered dead and destroyed (default 10 minutes, covering long silent thinking stretches in a stream). |
 
 ---
 
