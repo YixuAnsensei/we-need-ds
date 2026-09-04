@@ -90,17 +90,19 @@ sequenceDiagram
 ├── settings.json                   # 官方设置文件 (管理 enabledPlugins, permissions 等)
 ├── cc-haha/                        # cc-haha 定制目录 (https://github.com/NanmiCoder/cc-haha)
 │   └── providers.json              # Provider 路由表 (baseUrl, activeId, 模型映射等)
+├── we-need-ds/                     # 插件集中数据目录 (跨版本持久化)
+│   ├── runtime-state.json          # 运行时账本 (原始 URL 映射表 / keyMap / 拦截开关)
+│   └── we-need-ds.log              # 运行日志
 └── plugins/                        # 插件系统根目录 (Plugin V2 规范)
     ├── installed_plugins.json      # 已安装插件注册表与 cache 映射
     ├── known_marketplaces.json     # 插件市场源列表
     └── cache/                      # 插件运行时隔离沙盒
         └── claude-plugins-official/
-            └── we-need-ds/<version>/   # we-need-ds 运行时代码与状态文件
+            └── we-need-ds/<version>/   # we-need-ds 运行时代码
                 ├── config.json     # 插件核心配置
                 ├── proxy.js        # 拦截代理核心
                 ├── lib/state.js    # 状态机与映射池
-                ├── skills/         # 官方标准技能入口
-                └── runtime-state.json # 运行时临时状态 (记录原始 URL 映射表)
+                └── skills/         # 官方标准技能入口
 ```
 
 ---
