@@ -117,7 +117,7 @@ sequenceDiagram
 | **`/we-need-ds <task>`** | **Execute with full-power reasoning** | Primary entry point: enables interception and runs task |
 | **`/we-need-ds:plan <task>`** | **Read-only planning agent** | Summons `we-need-planner` to generate Markdown blueprint |
 | **`/we-need-ds:doctor`** | **Health diagnostic** | Inspects proxy port, environment mode, 25-provider pool status |
-| **`/we-need-ds:test`** | **Run test simulation suite** | 12 test cases verifying decision-turn minimal mode, execution-turn passthrough, and non-target passthrough |
+| **`/we-need-ds:test`** | **Run test simulation suite** | Assertions covering decision-turn minimal mode, execution-turn passthrough, non-target passthrough, M1/M3 edge cases, and the non-DS safety baseline |
 | **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, interception switch, hooked providers, and logs |
 | **`/we-need-ds:on`** | **Enable interception** | Hooks all providers; decision turns enter minimal simulation by default |
 | **`/we-need-ds:off`** | **Force disable & restore** | Restores all providers to their original upstream URLs |

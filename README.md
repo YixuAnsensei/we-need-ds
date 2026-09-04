@@ -95,7 +95,7 @@ sequenceDiagram
     ├── known_marketplaces.json     # 插件市场源列表
     └── cache/                      # 插件运行时隔离沙盒
         └── claude-plugins-official/
-            └── we-need-ds/1.0.0/   # we-need-ds 运行时代码与状态文件
+            └── we-need-ds/<version>/   # we-need-ds 运行时代码与状态文件
                 ├── config.json     # 插件核心配置
                 ├── proxy.js        # 拦截代理核心
                 ├── lib/state.js    # 状态机与映射池
@@ -147,8 +147,8 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | **`/we-need-ds <任务>`** | **一键启动满血思维链并执行** | 默认主入口，附带任务，自动开启拦截并执行 |
 | **`/we-need-ds:plan <任务>`** | **调用只读规划专家子代理** | 超大项目、重构任务，想先看 Markdown 蓝图而不动代码 |
-| **`/we-need-ds:doctor`** | **一键深度体检** | 排查代理端口、环境模式、25 个 Provider 池接管与连通状态 |
-| **`/we-need-ds:test`** | **运行轮次结构感知自测试套件** | 12 组包含判定轮极简、执行轮放行、非目标模型透传的完整断言 |
+| **`/we-need-ds:doctor`** | **一键深度体检** | 排查代理端口、环境模式、Provider 池接管与连通状态 |
+| **`/we-need-ds:test`** | **运行轮次结构感知自测试套件** | 覆盖判定轮极简、执行轮放行、非目标模型透传、M1/M3 边界、非 DS 安全底线的完整断言 |
 | **`/we-need-ds:status`** | **查看当前运行与拦截状态** | 查看当前代理进程、拦截开关、被接管的提供商清单与日志 |
 | **`/we-need-ds:on`** | **手动开启拦截环境** | 显式开启全量接管，判定轮常态进入极简模拟 |
 | **`/we-need-ds:off`** | **手动关闭拦截并还原端点** | 随时手动将所有 Provider 恢复到各自原有的真实地址 |
