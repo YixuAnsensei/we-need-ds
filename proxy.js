@@ -116,11 +116,13 @@ function buildTargetUrl(upstreamBase, reqUrl) {
   return new URL(basePath + reqUrl, base.origin);
 }
 
-function applyDshMinimalSystem(body, format) {
-  let openAiStyle;
-  if (format === 'openai') openAiStyle = true;
-  else if (format === 'anthropic') openAiStyle = false;
-  else openAiStyle = body.system === undefined;
+function resolveOpenAiStyle(body, format) {
+  if (format === 'openai') return true;
+  if (format === 'anthropic') return false;
+  return body.system === undefined;
+}
+
+function applyDshMinimalSystem(body, openAiStyle) {
   if (Array.isArray(body.messages)) {
     body.messages = body.messages.filter(m => m.role !== 'system');
   }
@@ -170,11 +172,12 @@ function processRequestBody(rawBody, reqUrl) {
     const body = JSON.parse(rawBody);
 
     const format = formatFromRequestPath(reqUrl);
+    const openAiStyle = resolveOpenAiStyle(body, format);
     const isExecution = isToolFollowup(body);
     if (isDeepSeekProModel(body && body.model) && Array.isArray(body && body.messages) && body.messages.length > 0) {
       if (isExecution) {
           if (shouldApplyMinimalPersona(body, true)) {
-            applyDshMinimalSystem(body, format);
+            applyDshMinimalSystem(body, openAiStyle);
           return JSON.stringify(body);
         }
         return rawBody;
@@ -190,9 +193,9 @@ function processRequestBody(rawBody, reqUrl) {
           });
         }
         if (shouldApplyMinimalPersona(body, false)) {
-          applyDshMinimalSystem(body, format);
+          applyDshMinimalSystem(body, openAiStyle);
         }
-        applyThinkingBudget(body);
+        if (!openAiStyle) applyThinkingBudget(body);
         return JSON.stringify(body);
       }
     }

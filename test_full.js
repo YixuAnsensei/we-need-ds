@@ -353,6 +353,18 @@ async function main() {
     const outDefaultOai = JSON.parse(prbE(anthNoSystem));
     check('E5 A1: 无路径+无system字段→默认OpenAI(注入messages system)', (outDefaultOai.messages || []).some(m => m.role === 'system' && m.content === 'You are a helpful software engineer assistant.') && !Array.isArray(outDefaultOai.system));
 
+    const proxyMod = require('./proxy.js');
+    const prevBudget = proxyMod.config.thinkingBudget;
+    proxyMod.config.thinkingBudget = 1000;
+    try {
+      const outAnthThink = JSON.parse(prbE(anthNoSystem, '/v1/messages'));
+      check('E6 thinkingBudget: Anthropic路径注入thinking字段', outAnthThink.thinking && outAnthThink.thinking.type === 'enabled' && outAnthThink.thinking.budget_tokens === 1000);
+      const outOaiThink = JSON.parse(prbE(anthNoSystem, '/v1/chat/completions'));
+      check('E7 thinkingBudget: OpenAI路径不注入(防上游400)', outOaiThink.thinking === undefined);
+    } finally {
+      proxyMod.config.thinkingBudget = prevBudget;
+    }
+
     const mixedTr = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'o' }, { type: 'text', text: '<system-reminder>warn</system-reminder>' }] }] };
     check('E4 M3: tool_result+文本混合仍判执行轮(不误砍进行中的工具链)', itf(mixedTr) === true);
 

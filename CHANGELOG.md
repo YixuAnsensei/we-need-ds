@@ -3,6 +3,15 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.3 — 2026-09-04
+
+### Fixed
+- **thinkingBudget no longer leaks to OpenAI upstream** — the Anthropic-only `thinking: {type:"enabled", budget_tokens:N}` field was previously injected on every decision turn regardless of request format; an OpenAI-style endpoint would reject it with 400. Now gated by `if (!openAiStyle)`.
+- **Format detection single source of truth** — extracted `resolveOpenAiStyle(body, format)`; both the persona rewrite and the thinking gate now derive OpenAI-vs-Anthropic from the same function (path signal first, `system` field fallback), eliminating the risk of the two paths disagreeing.
+
+### Tests
+- Added E6 (Anthropic path injects thinking) and E7 (OpenAI path does not). Full suite 70 green.
+
 ## v2.1.2 — 2026-09-04
 
 ### Fixed
