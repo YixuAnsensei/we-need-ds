@@ -3,6 +3,16 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.2 — 2026-09-04
+
+### Fixed
+- **Format default flipped to OpenAI** — when the request path carries no format signal, presence of a top-level `system` field → Anthropic, otherwise → OpenAI. Real Anthropic traffic always has `/messages` or a `system` field, so the residual bucket is almost entirely OpenAI. Removed the weak `isOpenAiStyle` body sniffing; format is now decided only by strong signals (path / `system` field).
+- **env upstream no longer shadowed** — in pure-Claude-Code mode, `defaultUpstream` now prefers `ANTHROPIC_UPSTREAM_BASE_URL` instead of being overridden by the hardcoded `20128` fallback, so the env-var fallback documented in the README actually takes effect.
+- **boot orphan cleanup port** — ctl.js `netstat` now uses `config.port` instead of hardcoded `20329`, so stale-daemon cleanup works after a port change.
+
+### Tests
+- E2/E3 pass explicit paths; added E5 (default-OpenAI fallback) and F10 (env not shadowed). Full suite 70 green.
+
 ## v2.1.1 — 2026-09-04
 
 ### Fixed
