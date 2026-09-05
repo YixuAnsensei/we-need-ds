@@ -234,3 +234,15 @@ schtasks /create /tn "we-need-ds-boot" /tr "node \"<CACHE>\lib\ctl.js\" boot" /s
 
 **作者**: [YixuAn](https://github.com/YixuAnsensei)
 **鸣谢**: [cc-haha 客户端项目](https://github.com/NanmiCoder/cc-haha) & DeepSeek Harness (DSH) 社区
+
+---
+
+## ☕ 请作者喝杯奶茶
+
+如果这个项目对你有帮助，欢迎点个 Star，也可以请我喝一杯奶茶~
+
+<p align="center">
+  <img src="docs/alipay_qr.jpeg" width="220" alt="支付宝收款码">
+</p>
+
+> 赞赏纯属自愿，你的 Star 就是对项目最大的支持 ⭐
