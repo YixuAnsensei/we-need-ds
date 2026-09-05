@@ -521,6 +521,45 @@ async function main() {
       try { process.kill(-spawnedH.pid); } catch (e) { try { spawnedH.kill(); } catch (e2) {} }
       hMock.close();
       fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgH0, null, 2));
+
+      console.log('===== Phase I: user-prompt-submit 失败还原后自动重接管(当轮恢复裁剪) =====');
+      const provData = {
+        activeId: 'p-i1',
+        providers: [
+          { id: 'p-i1', name: '测试中转I', baseUrl: 'http://127.0.0.1:2099', apiKey: 'sk-i1', models: { m1: 'deepseek-v4-pro' } }
+        ]
+      };
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify(provData, null, 2));
+      state.writeState({
+        enabled: true,
+        proxyUrl: 'http://127.0.0.1:21329',
+        providers: { 'p-i1': { name: '测试中转I', originalUrl: 'http://127.0.0.1:2099', apiKey: 'sk-i1' } },
+        keyMap: {},
+        defaultUpstream: 'http://127.0.0.1:2099',
+        ts: new Date().toISOString()
+      });
+      const runHook = () => execSync(`node "${path.join(__dirname, 'hooks', 'user-prompt-submit.js')}"`, { stdio: 'ignore' });
+      const provBase = () => JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8')).providers[0].baseUrl;
+
+      killDaemon();
+      await new Promise(r => setTimeout(r, 500));
+      spawnDaemon();
+      check('I0 主 daemon 拉起', await waitProxy());
+      runHook();
+      check('I1 enabled+daemon活+provider直连 → 钩子自动重接管(当轮裁剪恢复)', provBase() === 'http://127.0.0.1:21329');
+      runHook();
+      check('I2 已接管状态跑钩子不破坏', provBase() === 'http://127.0.0.1:21329');
+      killDaemon();
+      await new Promise(r => setTimeout(r, 500));
+      runHook();
+      check('I3 daemon死→钩子复活并接管', provBase() === 'http://127.0.0.1:21329' && await state.isProxyRunning(21329));
+      killDaemon();
+      await new Promise(r => setTimeout(r, 500));
+      const blocker = http.createServer((req, res) => { res.writeHead(404); res.end('not wnd'); });
+      await new Promise(r => blocker.listen(21329, '127.0.0.1', r));
+      runHook();
+      check('I4 daemon起不来(端口被占)→钩子还原直连(不留死状态)', provBase() === 'http://127.0.0.1:2099');
+      blocker.close();
     } finally {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}

@@ -330,7 +330,11 @@ async function forwardWithRetry(transport, targetUrl, method, headers, outgoingB
       if (firstChunk && firstChunk.length > 0) res.write(firstChunk);
       proxyRes.pipe(res);
       proxyRes.on('error', (err) => {
-        state.log(`upstream res error after first byte: ${targetUrl.href} -> ${err.message}`);
+        state.log(`upstream res error after first byte (transparent disconnect to client): ${targetUrl.href} -> ${err.message}`);
+        try { res.destroy(); } catch (e) {}
+      });
+      proxyRes.on('aborted', () => {
+        state.log(`upstream res aborted mid-stream (transparent disconnect to client): ${targetUrl.href}`);
         try { res.destroy(); } catch (e) {}
       });
       if (attempt > 0) state.log(`upstream recovered on attempt ${attempt + 1}: ${targetUrl.href}`);

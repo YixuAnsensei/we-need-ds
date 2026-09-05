@@ -35,6 +35,16 @@ async function main() {
         console.log(`[we-need-ds] 代理复活失败；已把 ${n} 个指向代理的 provider 还原直连（避免死锁）`);
       }
     }
+  } else {
+    const st = state.readState();
+    if (st.enabled && !state.detectDeadState(config).dead) {
+      const re = state.enableInterception(config);
+      const n = re.interceptedList ? re.interceptedList.length : 0;
+      if (n > 0) {
+        state.log(`user-prompt-submit: enabled but zero hooked (previous fail-safe restore), re-hooked ${n}`);
+        console.log(`[we-need-ds] 检测到拦截开启但未被接管（上次失败已还原直连），daemon 存活，已重新接管 ${n} 个（当轮裁剪恢复生效）`);
+      }
+    }
   }
 }
 

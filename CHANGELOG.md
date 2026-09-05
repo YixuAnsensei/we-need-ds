@@ -3,6 +3,17 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.13 — 2026-09-06
+
+### Fixed (recovery is reversible — same-turn trim restoration)
+- **"Failed restore → direct" was one-way** — v2.1.12's fail-safe restored providers to direct on failed recovery, but once the port conflict cleared, nothing re-hooked them: the user's *next* message went direct (no DSH trim) until a manual `on`. Now `user-prompt-submit` re-hooks automatically whenever the ledger says `enabled`, the daemon is alive, and zero providers are hooked — the previous fail-safe restore is reversed on the very next message, so the turn right after recovery is proxied and trimmed again. Also guards against re-hooking when the daemon is only a non-we-need-ds process squatting the port.
+
+### Changed (mid-stream disconnect is now transparent)
+- **After the first byte, upstream disconnect/error is passed through** — the proxy destroys the client connection (client sees a real `aborted`, not a fabricated 502) so the client harness can decide to retry on its own, exactly like a real harness speaking to an unstable upstream. Logged as `upstream res aborted mid-stream` / `upstream res error after first byte`. Retry-before-first-byte, three gates, empty-body detection, and 5xx passthrough are unchanged.
+
+### Tests
+- All three suites green (test_full now 79 + simulation 18 + consume 18) with production files provably untouched. New Phase I (test_full): enabled+daemon-alive+zero-hooked → hook re-hooks (same-turn trim restored); hooked → hook is a no-op; daemon dead → revive + hook; port squatted by non-we-need-ds process → restore to direct. New mid-stream e2e: client receives first chunk then a real `aborted` on upstream mid-stream disconnect.
+
 ## v2.1.12 — 2026-09-06
 
 ### Fixed (no deadlock: failed recovery restores providers to direct)
