@@ -1,7 +1,15 @@
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
+
+const ISOL_DIR = path.join(os.tmpdir(), 'wnd-test-isolation-' + process.pid);
+fs.mkdirSync(path.join(ISOL_DIR, 'cc-haha'), { recursive: true });
+fs.mkdirSync(path.join(ISOL_DIR, 'we-need-ds'), { recursive: true });
+process.env.WE_NEED_DS_PROVIDERS_PATH = path.join(ISOL_DIR, 'cc-haha', 'providers.json');
+process.env.WE_NEED_DS_DATA_DIR = path.join(ISOL_DIR, 'we-need-ds');
+
 const state = require('./lib/state.js');
 
 let failed = 0;
@@ -168,6 +176,7 @@ async function main() {
   try { fs.copyFileSync(BACKUP, STATE_PATH); fs.unlinkSync(BACKUP); } catch (e) {}
   if (hadProviders) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
   try { fs.unlinkSync(PROVIDERS_BAK); } catch (e) {}
+  try { fs.rmSync(ISOL_DIR, { recursive: true, force: true }); } catch (e) {}
 
   console.log(failed === 0 ? '\n全部通过' : `\n${failed} 项失败`);
   process.exit(failed === 0 ? 0 : 1);
@@ -176,6 +185,7 @@ async function main() {
 main().catch(e => {
   try { fs.copyFileSync(BACKUP, STATE_PATH); } catch (e2) {}
   try { if (fs.existsSync(PROVIDERS_BAK)) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); } catch (e2) {}
+  try { fs.rmSync(ISOL_DIR, { recursive: true, force: true }); } catch (e2) {}
   console.error('FATAL', e);
   process.exit(1);
 });

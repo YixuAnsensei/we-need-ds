@@ -75,10 +75,10 @@ sequenceDiagram
    * 纯请求结构判定：末条为新 user 文本 = **判定轮**（等待模型规划），末条为 tool/tool_result = **执行轮**（工具续跑）；
    * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
    * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
-3. **🛡️ 三重防呆生命周期与无死锁保障**：
-   * **自动启动挂载 + 消息级自愈**：SessionStart 钩子开箱自启动；UserPromptSubmit 钩子每条新消息自检复活；
-   * **会话结束自动还原**：SessionEnd 钩子触发批量恢复；
-   * **常驻守护 + 消息级自愈**：daemon 默认常驻不退出；UserPromptSubmit 钩子在你每条新消息时自检，daemon 若失效自动拉起并重新接管；SessionEnd/会话结束自动安全还原；
+3. **🛡️ 多重防呆生命周期与无死锁保障**：
+   * **宿主钩子自动接管**：SessionStart 钩子自启动、UserPromptSubmit 钩子每条新消息自检复活、SessionEnd 钩子会话结束批量还原（在支持插件 hooks 的宿主上生效）；
+   * **开机自愈兜底（不依赖宿主钩子）**：Windows 关机/重启会直接杀死 daemon 且绕过所有钩子，providers 会停留在指向死代理端口的"孤儿"状态。`node lib/ctl.js boot` 按账本 `enabled` 状态自愈——开启态则拉起 daemon + 修复孤儿 + 重新接管，关闭态则清理残留。**建议注册为登录时计划任务**（见下方"开机自愈"），这是宿主钩子不可靠时唯一稳定的复活路径；
+   * **常驻守护**：daemon 默认常驻不退出（`idleAutoShutdownMinutes: 0`）；
    * **非目标模型 100% 零侵入**：Claude / GPT / Gemini / Qwen 纯字节流直通。
 
 ---
@@ -158,6 +158,20 @@ sequenceDiagram
 
 ---
 
+## 🔌 开机自愈（强烈建议注册）
+
+Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话钩子——providers.json 会停留在指向死代理端口的"孤儿"状态，开机后若宿主钩子未触发，所有服务商就全断了。`ctl boot` 是**不依赖宿主钩子**的自愈命令：读账本 `enabled` 状态，开启态则拉起 daemon + 修复孤儿 + 重新接管，关闭态则清理残留进程。
+
+把它注册为**登录时计划任务**，即可保证每次开机自动复活（把 `<CACHE>` 换成你实际的插件 cache 路径，见 `~/.claude/plugins/installed_plugins.json` 的 `installPath`）：
+
+```powershell
+schtasks /create /tn "we-need-ds-boot" /tr "node \"<CACHE>\lib\ctl.js\" boot" /sc onlogon /rl limited /f
+```
+
+> 手动触发一次：`node "<CACHE>\lib\ctl.js" boot`。删除任务：`schtasks /delete /tn "we-need-ds-boot" /f`。
+
+---
+
 ## ⚙️ 配置文件说明 (`config.json`)
 
 ```json
@@ -210,6 +224,7 @@ sequenceDiagram
 1. **账本信任链**：插件把 provider 的 `baseUrl` 改写为代理地址时，会把"改写瞬间的 baseUrl"记为真实上游（`originalUrl`）。因此**请确保 cc-haha 里每个 provider 的 baseUrl 指向的是真实上游**（官方端点或你自己的中转，如 9router 的 `:20128`）。若你把某个 provider 手动配成了**另一个代理地址**，插件会把这个代理地址当作真实上游记录并还原——这是设计边界，不是 bug。开启拦截前用 `/we-need-ds:doctor` 核对各 provider 的原始上游是否符合预期。
 2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.1.x`）。两者独立编号：机制 v5.1 对应插件 2.1.x 系列。GitHub Releases 以 semver 为准。
 3. **端口占用**：代理默认绑定 `127.0.0.1:20329`。若被占用请改 `config.json` 的 `port`；插件在端口变更时会自动把指向旧端口的 provider 先还原再按新端口接管，不会把代理地址误记为真实上游。
+4. **测试隔离（跑测试套件必读）**：自测试套件会改写 providers.json 与 runtime-state.json。为避免污染你正在使用的生产环境，跑测试前务必设置三个隔离环境变量，让测试全程读写临时目录、绝不碰生产文件：`WE_NEED_DS_TEST_PORT`（测试端口）、`WE_NEED_DS_PROVIDERS_PATH`（临时 providers.json 路径）、`WE_NEED_DS_DATA_DIR`（临时数据目录）。`test_full.js` / `test_consume.js` 已内置自动隔离（用 `os.tmpdir()` 临时目录），直接 `node test_full.js` 即可；手动跑 `ctl on/off` 等接管命令时若不想碰生产，同样设这三个变量。
 
 ---
 

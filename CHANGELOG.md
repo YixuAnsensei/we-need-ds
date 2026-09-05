@@ -3,6 +3,18 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.9 — 2026-09-05
+
+### Fixed (the real cause of "every time you change the port my session disconnects")
+- **Test isolation root-cause fix** — the self-test suites (`test_full.js`, `test_consume.js`) rewrote the **production** `providers.json` and `runtime-state.json` (only the *port* was isolated via `WE_NEED_DS_TEST_PORT`, never the *files*). While a suite ran, any other live session reading `providers.json` saw test data and every message broke — exactly the repeated disconnects reported. `lib/state.js` now honors `WE_NEED_DS_PROVIDERS_PATH` and `WE_NEED_DS_DATA_DIR` env overrides; both suites point them at a fresh `os.tmpdir()` sandbox before `require`, so tests never touch production files. Verified: production `providers.json` + `runtime-state.json` md5 are byte-identical before and after all three suites.
+- **`ctl boot` now re-hooks after reviving** — the boot self-heal previously restored orphan providers to their real upstreams and revived the daemon but **never re-applied interception**, so after a reboot the proxy ran idle and DSH trimming was silently off (providers pointed straight at upstreams). It now follows the same validated `recoverOrphans → enableInterception` sequence as the UserPromptSubmit hook: revive daemon → restore orphans → re-hook. Verified end-to-end in an isolated sandbox (dead-proxy-port scenario → boot → daemon up + providers re-hooked + request passes through to real upstream).
+
+### Changed (docs)
+- README / README_EN: corrected the lifecycle description — host hooks (SessionStart/UserPromptSubmit/SessionEnd) only fire on hosts that actually run plugin hooks; cc-haha has been observed not to trigger them, so **boot self-healing via a logon scheduled task is now documented as the reliable revival path**. Added a "Boot Self-Healing" section with the `schtasks /create ... /sc onlogon` command, and a "Test isolation" note under Boundaries.
+
+### Tests
+- All three suites green (test_full 74 + simulation 18 + consume 18) **with production files provably untouched** (md5 before == after).
+
 ## v2.1.8 — 2026-09-04
 
 ### Fixed (first-byte gate no longer kills slow-thinking streams)

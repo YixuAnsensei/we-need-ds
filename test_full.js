@@ -3,6 +3,13 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execSync } = require('child_process');
+
+const ISOL_DIR = path.join(os.tmpdir(), 'wnd-test-isolation-' + process.pid);
+fs.mkdirSync(path.join(ISOL_DIR, 'cc-haha'), { recursive: true });
+fs.mkdirSync(path.join(ISOL_DIR, 'we-need-ds'), { recursive: true });
+process.env.WE_NEED_DS_PROVIDERS_PATH = path.join(ISOL_DIR, 'cc-haha', 'providers.json');
+process.env.WE_NEED_DS_DATA_DIR = path.join(ISOL_DIR, 'we-need-ds');
+
 const state = require('./lib/state.js');
 
 let failed = 0;
@@ -454,7 +461,10 @@ async function main() {
       fs.writeFileSync(path.join(cacheVerDir, 'runtime-state.json'), JSON.stringify(legacyLedger));
       const migScript = path.join(fakeHome, 'mig.js');
       fs.writeFileSync(migScript, `const s=require(${JSON.stringify(path.join(fakeHome, 'lib', 'state.js'))});const fs=require('fs');let ok=false;try{const d=JSON.parse(fs.readFileSync(s.STATE_PATH,'utf8'));ok=d.providers&&d.providers.mig&&d.providers.mig.originalUrl==='https://api.deepseek.com/anthropic';}catch(e){}console.log(ok?'MIGRATED':'NOT_MIGRATED');`);
-      const migOut = execSync(`node "${migScript}"`, { env: { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome }, encoding: 'utf8' }).trim();
+      const migEnv = { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome };
+      delete migEnv.WE_NEED_DS_DATA_DIR;
+      delete migEnv.WE_NEED_DS_PROVIDERS_PATH;
+      const migOut = execSync(`node "${migScript}"`, { env: migEnv, encoding: 'utf8' }).trim();
       check('G2 D3: 账本在 cache/<hash版本>/ 能被迁移到集中目录(不再硬编码1.0.0)', migOut === 'MIGRATED');
       try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch (e) {}
 
@@ -526,6 +536,7 @@ async function main() {
     if (hadProviders) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
     try { fs.unlinkSync(PROVIDERS_BAK); } catch (e) {}
     killDaemon();
+    try { fs.rmSync(ISOL_DIR, { recursive: true, force: true }); } catch (e) {}
   }
 
   console.log(failed === 0 ? '\n全部通过' : `\n${failed} 项失败`);
@@ -537,6 +548,7 @@ main().catch(e => {
   try { fs.copyFileSync(CONFIG_BAK, CONFIG_PATH); } catch (e2) {}
   try { if (fs.existsSync(PROVIDERS_BAK)) fs.copyFileSync(PROVIDERS_BAK, state.PROVIDERS_PATH); } catch (e2) {}
   killDaemon();
+  try { fs.rmSync(ISOL_DIR, { recursive: true, force: true }); } catch (e2) {}
   console.error('FATAL', e);
   process.exit(1);
 });

@@ -75,9 +75,9 @@ sequenceDiagram
    * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor);
    * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
-   * **Auto Hook on Start + Revive**: SessionStart hook initializes the background proxy; UserPromptSubmit hook revives it automatically if dead.
-   * **Auto Restore on Exit**: SessionEnd hook restores all provider URLs.
-   * **常驻守护 + 消息级自愈 (Always-on + Self-Healing)**: daemon 常驻不退出；UserPromptSubmit 钩子在你每条新消息时自检，若失效自动拉起并重新接管；
+   * **Host Hooks (where supported)**: SessionStart hook initializes the background proxy; UserPromptSubmit hook revives it automatically if dead; SessionEnd hook restores all provider URLs.
+   * **Boot Self-Healing (host-hook independent)**: Windows shutdown/restart kills the daemon and bypasses every hook, leaving providers.json pointing at a dead proxy port. `node lib/ctl.js boot` self-heals from the ledger's `enabled` flag — revives the daemon + restores orphans + re-hooks, or cleans up a stray process when disabled. **Register it as a logon scheduled task** (see "Boot Self-Healing" below) — this is the only reliable revival path when host hooks don't fire.
+   * **Always-on daemon**: stays resident by default (`idleAutoShutdownMinutes: 0`).
    * **100% Zero-Touch for Non-Target Models**: Claude, GPT, Gemini, Qwen models pass through with pure byte-level streaming.
 
 ---
@@ -122,6 +122,20 @@ sequenceDiagram
 | **`/we-need-ds:on`** | **Enable interception** | Hooks all providers; decision turns enter minimal simulation by default |
 | **`/we-need-ds:off`** | **Force disable & restore** | Restores all providers to their original upstream URLs |
 | **`/we-need-ds:restart`** | **Gracefully restart the daemon** | When the proxy is wedged (e.g. full of stalled upstream requests) or after a code update: kills the old process → spawns a fresh daemon → re-hooks providers from the ledger |
+
+---
+
+## 🔌 Boot Self-Healing (strongly recommended)
+
+Windows shutdown/restart **kills the daemon outright** and bypasses every session hook — providers.json is left pointing at a dead proxy port, so if the host hooks don't fire after boot, every provider is broken. `ctl boot` is the **host-hook-independent** self-heal: it reads the ledger's `enabled` flag — when enabled it revives the daemon + restores orphans + re-hooks; when disabled it cleans up a stray process.
+
+Register it as a **logon scheduled task** so it runs automatically on every boot (replace `<CACHE>` with your actual plugin cache path from `~/.claude/plugins/installed_plugins.json`'s `installPath`):
+
+```powershell
+schtasks /create /tn "we-need-ds-boot" /tr "node \"<CACHE>\lib\ctl.js\" boot" /sc onlogon /rl limited /f
+```
+
+> Trigger manually once: `node "<CACHE>\lib\ctl.js" boot`. Remove the task: `schtasks /delete /tn "we-need-ds-boot" /f`.
 
 ---
 
@@ -177,6 +191,7 @@ sequenceDiagram
 1. **Ledger trust chain**: when the plugin rewrites a provider's `baseUrl` to the proxy address, it records the baseUrl *at the moment of rewriting* as the real upstream (`originalUrl`). So **make sure every provider's baseUrl in cc-haha points to a real upstream** (official endpoint or your own relay, e.g. 9router on `:20128`). If you manually configure a provider to point at *another proxy*, the plugin will record that proxy address as the real upstream and restore to it — this is a design boundary, not a bug. Run `/we-need-ds:doctor` before enabling interception to verify each provider's original upstream.
 2. **Two version lines**: **v5 / v5.1** throughout the docs refers to the **mechanism version** (the turn-aware DSH minimal simulation algorithm's evolution codename); the plugin itself follows **semver** (see `plugin.json` and CHANGELOG, currently `2.1.x`). They are numbered independently: mechanism v5.1 corresponds to plugin 2.1.x. GitHub Releases use semver.
 3. **Port occupancy**: the proxy binds `127.0.0.1:20329` by default. If occupied, change `port` in `config.json`; on a port change the plugin first restores providers pointing at the old port, then re-hooks them on the new port — the proxy address is never recorded as a real upstream.
+4. **Test isolation (read before running the suites)**: the self-test suites rewrite providers.json and runtime-state.json. To avoid polluting your live environment, set three isolation env vars so tests read/write a temp dir and never touch production files: `WE_NEED_DS_TEST_PORT` (test port), `WE_NEED_DS_PROVIDERS_PATH` (temp providers.json path), `WE_NEED_DS_DATA_DIR` (temp data dir). `test_full.js` / `test_consume.js` have this isolation built in (via `os.tmpdir()`), so `node test_full.js` is safe as-is; when manually running takeover commands like `ctl on/off` without touching production, set the same three vars.
 
 ---
 
