@@ -136,6 +136,8 @@ So **after a reboot, or after fully restarting cc-haha / Claude Code**, start in
 
 In-session self-healing (the UserPromptSubmit hook: every new message checks the daemon and revives + re-hooks if it's dead) still works on hosts that support plugin hooks, and doesn't conflict with the manual start above.
 
+**Fail-safe restore (no deadlock)**: every recovery path (`on` / `boot` / hooks) that fails to bring the daemon up **automatically restores any provider still pointing at the proxy port back to its real upstream** — never leaving a deadlocked state where endpoints point at a dead proxy, the app is unusable, and even the recovery command can't get through. `status` / `doctor` print a prominent warning (plus the recovery command) when providers point at the proxy port but the daemon is down.
+
 ---
 
 ## ⚙️ Configuration (`config.json`)

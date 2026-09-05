@@ -60,13 +60,20 @@ async function main() {
   } else {
     result = {
       ok: false,
-      reason: `端口 ${config.port} 上的进程不响应 /ctl（可能被其他程序占用，拦截已放弃，providers 保持真实地址）`
+      reason: `端口 ${config.port} 上的进程不响应 /ctl（可能被其他程序占用，拦截已放弃）`
     };
   }
   if (result.ok) {
     console.log(`[we-need-ds] 拦截已开启：baseUrl 临时切至 :${config.port}（会话结束自动还原）`);
   } else {
-    console.log(`[we-need-ds] 拦截开启失败：${result.reason}`);
+    const ds = state.detectDeadState(config);
+    if (ds.dead) {
+      const off = state.disableInterception(config);
+      const n = off && off.restoredList ? off.restoredList.length : 0;
+      console.log(`[we-need-ds] 拦截开启失败：${result.reason}；已把 ${n} 个指向代理的 provider 还原直连（避免死锁，可随时 /we-need-ds:on 重试）`);
+    } else {
+      console.log(`[we-need-ds] 拦截开启失败：${result.reason}；providers 未指向代理，保持直连`);
+    }
   }
 }
 

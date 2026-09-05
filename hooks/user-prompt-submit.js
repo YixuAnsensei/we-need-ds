@@ -27,6 +27,13 @@ async function main() {
       console.log('[we-need-ds] 检测到代理已失效，已自动拉起并重新接管（裁剪恢复生效）');
     } else {
       state.log('user-prompt-submit: daemon failed to revive');
+      const ds = state.detectDeadState(config);
+      if (ds.dead) {
+        const off = state.disableInterception(config);
+        const n = off && off.restoredList ? off.restoredList.length : 0;
+        state.log(`user-prompt-submit: revive failed, ${n} providers restored to direct (avoid deadlock)`);
+        console.log(`[we-need-ds] 代理复活失败；已把 ${n} 个指向代理的 provider 还原直连（避免死锁）`);
+      }
     }
   }
 }

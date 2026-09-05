@@ -3,6 +3,24 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.12 — 2026-09-06
+
+### Fixed (no deadlock: failed recovery restores providers to direct)
+- **The "endpoints point at a dead proxy" trap is closed** — after a reboot, providers could remain pointing at the proxy port while the daemon was down. Worse, the recovery command itself (`/we-need-ds:on`) goes through the very model endpoint that's dead — a chicken-and-egg deadlock. Now **every recovery path that fails to bring the daemon up automatically restores any provider still pointing at the proxy port back to its real upstream**:
+  - `ctl on` failure → restore orphans to direct before exiting;
+  - `ctl boot` enabled-branch daemon-fail → restore orphans to direct (previously left them dangling "for manual review");
+  - `session-start` hook `/ctl on` unreachable → restore to direct;
+  - `user-prompt-submit` hook revive-fail → restore to direct.
+  So a failed recovery always lands in the *usable* state (direct to upstream), never the dead one — and the user can retry `on` whenever the port conflict clears.
+- **New `detectDeadState(config)` in lib/state.js** — counts providers pointing at the proxy port (no daemon check needed at the call site).
+- **`status` / `doctor` now print a prominent dead-state warning** when providers point at the proxy port but the daemon is down, with the exact recovery command.
+
+### Kept intact (per user)
+- All Claude Code hook paths (SessionStart/UserPromptSubmit/SessionEnd) that were working in earlier versions are untouched — only the *failure* branches got the new fail-safe.
+
+### Tests
+- All three suites green (test_full 74 + simulation 18 + consume 18), production files untouched (md5 verified); new isolated e2e proves: detect dead state → recoverOrphans → provider back on real upstream, dead flag cleared.
+
 ## v2.1.11 — 2026-09-05
 
 ### Removed (no system-level persistence — reverted v2.1.10 autostart)
