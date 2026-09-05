@@ -76,7 +76,7 @@ sequenceDiagram
    * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
    * **Host Hooks (where supported)**: SessionStart hook initializes the background proxy; UserPromptSubmit hook revives it automatically if dead; SessionEnd hook restores all provider URLs.
-   * **Boot Self-Healing (host-hook independent)**: Windows shutdown/restart kills the daemon and bypasses every hook, leaving providers.json pointing at a dead proxy port. `node lib/ctl.js boot` self-heals from the ledger's `enabled` flag — revives the daemon + restores orphans + re-hooks, or cleans up a stray process when disabled. **Register it as a logon scheduled task** (see "Boot Self-Healing" below) — this is the only reliable revival path when host hooks don't fire.
+   * **Boot Self-Healing (host-hook independent)**: Windows shutdown/restart kills the daemon and bypasses every hook, leaving providers.json pointing at a dead proxy port. `node lib/ctl.js boot` self-heals from the ledger's `enabled` flag — revives the daemon + restores orphans + re-hooks, or cleans up a stray process when disabled. **Logon autostart is auto-registered the first time you run `/we-need-ds:on`** (a silent `.vbs` in the user Startup folder — no admin, zero manual steps), making this the only reliable revival path when host hooks don't fire (see "Boot Self-Healing" below).
    * **Always-on daemon**: stays resident by default (`idleAutoShutdownMinutes: 0`).
    * **100% Zero-Touch for Non-Target Models**: Claude, GPT, Gemini, Qwen models pass through with pure byte-level streaming.
 
@@ -125,17 +125,24 @@ sequenceDiagram
 
 ---
 
-## 🔌 Boot Self-Healing (strongly recommended)
+## 🔌 Boot Self-Healing (auto-enabled, no manual registration)
 
 Windows shutdown/restart **kills the daemon outright** and bypasses every session hook — providers.json is left pointing at a dead proxy port, so if the host hooks don't fire after boot, every provider is broken. `ctl boot` is the **host-hook-independent** self-heal: it reads the ledger's `enabled` flag — when enabled it revives the daemon + restores orphans + re-hooks; when disabled it cleans up a stray process.
 
-Register it as a **logon scheduled task** so it runs automatically on every boot (replace `<CACHE>` with your actual plugin cache path from `~/.claude/plugins/installed_plugins.json`'s `installPath`):
+**The first time you run `/we-need-ds:on`, it auto-registers logon autostart**: a silent `we-need-ds-boot.vbs` is written into the current user's Startup folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`), which runs `ctl boot` hidden on every logon. Properties:
+
+- **No admin required**: the Startup folder is writable by a normal user (a `schtasks /sc onlogon` scheduled task needs elevation on Win11, so it was dropped);
+- **Zero manual steps**: downstream users get it registered automatically on their first enable — they never need to know a registration command;
+- **Harmless when resident**: on boot it self-heals per the ledger's `enabled` flag — when interception is off it only cleans up strays and never turns the proxy on by itself;
+- **Removable anytime**: `node lib/ctl.js autostart uninstall`.
 
 ```powershell
-schtasks /create /tn "we-need-ds-boot" /tr "node \"<CACHE>\lib\ctl.js\" boot" /sc onlogon /rl limited /f
+node "<CACHE>\lib\ctl.js" autostart status      # check whether it's registered
+node "<CACHE>\lib\ctl.js" autostart install     # manual re-register (rarely needed; `on` does it)
+node "<CACHE>\lib\ctl.js" autostart uninstall   # remove boot autostart
 ```
 
-> Trigger manually once: `node "<CACHE>\lib\ctl.js" boot`. Remove the task: `schtasks /delete /tn "we-need-ds-boot" /f`.
+> Trigger manually once: `node "<CACHE>\lib\ctl.js" boot`.
 
 ---
 

@@ -9,6 +9,7 @@ fs.mkdirSync(path.join(ISOL_DIR, 'cc-haha'), { recursive: true });
 fs.mkdirSync(path.join(ISOL_DIR, 'we-need-ds'), { recursive: true });
 process.env.WE_NEED_DS_PROVIDERS_PATH = path.join(ISOL_DIR, 'cc-haha', 'providers.json');
 process.env.WE_NEED_DS_DATA_DIR = path.join(ISOL_DIR, 'we-need-ds');
+process.env.WE_NEED_DS_STARTUP_DIR = path.join(ISOL_DIR, 'startup');
 
 const state = require('./lib/state.js');
 
@@ -464,6 +465,7 @@ async function main() {
       const migEnv = { ...process.env, USERPROFILE: fakeHome, HOME: fakeHome };
       delete migEnv.WE_NEED_DS_DATA_DIR;
       delete migEnv.WE_NEED_DS_PROVIDERS_PATH;
+      delete migEnv.WE_NEED_DS_STARTUP_DIR;
       const migOut = execSync(`node "${migScript}"`, { env: migEnv, encoding: 'utf8' }).trim();
       check('G2 D3: 账本在 cache/<hash版本>/ 能被迁移到集中目录(不再硬编码1.0.0)', migOut === 'MIGRATED');
       try { fs.rmSync(fakeHome, { recursive: true, force: true }); } catch (e) {}

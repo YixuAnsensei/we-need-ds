@@ -3,6 +3,17 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.10 — 2026-09-05
+
+### Added (distribution-friendly boot self-healing)
+- **Startup-folder autostart, auto-installed on first enable** — v2.1.9 documented registering `ctl boot` as a logon *scheduled task*, but `schtasks /sc onlogon` requires **administrator elevation** on Win11 (verified: "拒绝访问" under normal privileges), and downstream users would never know to run it. New `lib/autostart.js` writes a silent `we-need-ds-boot.vbs` into the current user's **Startup folder** (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`) — writable with normal privileges, no UAC prompt. `/we-need-ds:on` now installs it automatically on success, so every user gets boot self-healing with **zero manual steps**; the entry is harmless while interception is off (boot self-heals per the ledger's `enabled` flag). New `ctl autostart install|uninstall|status` subcommands for manual control. `WE_NEED_DS_STARTUP_DIR` env override isolates the target directory for tests.
+
+### Changed (docs)
+- README / README_EN: the "Boot Self-Healing" section now describes the auto-installed Startup-folder entry (no admin, zero manual steps, removable via `autostart uninstall`) and drops the `schtasks` command as the recommended path.
+
+### Tests
+- All three suites green (test_full 74 + simulation 18 + consume 18) with production files provably untouched (md5 before == after); test suites isolate the Startup folder via `WE_NEED_DS_STARTUP_DIR` so no test ever writes to the real one.
+
 ## v2.1.9 — 2026-09-05
 
 ### Fixed (the real cause of "every time you change the port my session disconnects")
