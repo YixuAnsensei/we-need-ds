@@ -77,7 +77,7 @@ sequenceDiagram
    * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
 3. **🛡️ 多重防呆生命周期与无死锁保障**：
    * **宿主钩子自动接管**：SessionStart 钩子自启动、UserPromptSubmit 钩子每条新消息自检复活、SessionEnd 钩子会话结束批量还原（在支持插件 hooks 的宿主上生效）；
-   * **开机自愈兜底（不依赖宿主钩子）**：Windows 关机/重启会直接杀死 daemon 且绕过所有钩子，providers 会停留在指向死代理端口的"孤儿"状态。`node lib/ctl.js boot` 按账本 `enabled` 状态自愈——开启态则拉起 daemon + 修复孤儿 + 重新接管，关闭态则清理残留。**首次执行 `/we-need-ds:on` 时会自动注册登录自启动**（写入当前用户 Startup 文件夹的静默 `.vbs`，无需管理员权限、零手动操作），这是宿主钩子不可靠时唯一稳定的复活路径（见下方"开机自愈"）；
+   * **重启后手动恢复（不依赖宿主钩子，不做系统级注册）**：Windows 关机/重启会直接杀死 daemon 且绕过所有钩子，providers 会停留在指向死代理端口的"孤儿"状态。重启后执行一次 `/we-need-ds:on`（或终端 `node lib/ctl.js boot`）即可恢复——拉起 daemon + 修复孤儿 + 按账本接管。本插件不注册计划任务、不写 Startup 文件夹，卸载即干净（见下方"重启后的手动恢复"）；
    * **常驻守护**：daemon 默认常驻不退出（`idleAutoShutdownMinutes: 0`）；
    * **非目标模型 100% 零侵入**：Claude / GPT / Gemini / Qwen 纯字节流直通。
 
@@ -158,24 +158,16 @@ sequenceDiagram
 
 ---
 
-## 🔌 开机自愈（自动启用，无需手动注册）
+## 🔌 重启后的手动恢复（本插件不做任何系统级注册）
 
-Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话钩子——providers.json 会停留在指向死代理端口的"孤儿"状态，开机后若宿主钩子未触发，所有服务商就全断了。`ctl boot` 是**不依赖宿主钩子**的自愈命令：读账本 `enabled` 状态，开启态则拉起 daemon + 修复孤儿 + 重新接管，关闭态则清理残留进程。
+Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话钩子——providers.json 会停留在指向死代理端口的"孤儿"状态。本插件**刻意不做任何系统层面的持久化**（不注册计划任务、不写 Startup 文件夹）：插件就应该是插件，装完不偷偷改系统，卸载即干净。
 
-**首次执行 `/we-need-ds:on` 时会自动注册登录自启动**：在当前用户的 Startup 文件夹（`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`）写入一个静默 `we-need-ds-boot.vbs`，每次登录时以隐藏窗口执行 `ctl boot`。特点：
+因此**电脑重启后、或 cc-haha / Claude Code 完全重开后**，需要显式启动一次拦截（和平时用 skill 的方式一样）：
 
-- **无需管理员权限**：Startup 文件夹普通用户即可读写（计划任务 `schtasks /sc onlogon` 在 Win11 需要管理员提权，故弃用）；
-- **零手动操作**：下游用户 clone/安装后第一次开启拦截即自动注册，不需要知道任何注册命令；
-- **常驻无害**：开机时按账本 `enabled` 状态自愈——拦截关闭态只清理残留、不做任何接管，不会凭空开启代理；
-- **可随时移除**：`node lib/ctl.js autostart uninstall`。
+- 在 Claude Code 里执行 `/we-need-ds:on` —— 拉起 daemon + 修复孤儿 + 按账本接管，一步到位；
+- 或在终端跑 `node "<CACHE>\lib\ctl.js" boot` —— 不依赖宿主的等价恢复命令，读账本 `enabled` 状态自愈（开启态拉起 daemon + 修复孤儿 + 重新接管，关闭态清理残留）。
 
-```powershell
-node "<CACHE>\lib\ctl.js" autostart status      # 查看是否已注册
-node "<CACHE>\lib\ctl.js" autostart install     # 手动补注册（一般用不到，on 时自动做）
-node "<CACHE>\lib\ctl.js" autostart uninstall   # 移除开机自启
-```
-
-> 手动触发一次自愈：`node "<CACHE>\lib\ctl.js" boot`。
+会话进行中的自愈（UserPromptSubmit 钩子：每条新消息自检 daemon、死亡则复活重接管）在支持插件 hooks 的宿主上仍然生效，与上述手动启动不冲突。
 
 ---
 

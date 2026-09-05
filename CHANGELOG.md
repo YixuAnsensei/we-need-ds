@@ -3,6 +3,16 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.1.11 — 2026-09-05
+
+### Removed (no system-level persistence — reverted v2.1.10 autostart)
+- **Boot autostart dropped entirely** — v2.1.10 wrote a silent `.vbs` into the user's Startup folder. On reflection that is still a **system-level side effect**: downstream users don't know it exists, can't find it, and can't cleanly uninstall it — the same category of problem as the admin-elevation scheduled task it replaced. A plugin should be a plugin: install without silently modifying the OS, uninstall leaves nothing behind.
+- Deleted `lib/autostart.js`; removed the `autostart` subcommand and the auto-install call from `ctl on`; removed the `WE_NEED_DS_STARTUP_DIR` test isolation (no longer has a consumer).
+
+### Changed (recovery is now explicitly manual)
+- After a reboot / full cc-haha + Claude Code restart, start interception once with `/we-need-ds:on` (or `node lib/ctl.js boot` in a terminal) — same as invoking any skill. **Kept intact** (they don't conflict with manual start): in-session UserPromptSubmit self-heal hook, the `ctl boot` host-hook-independent recovery command, and all v2.1.7–v2.1.9 robustness fixes (upstream retry + three-gate health + empty-body detection + 5xx passthrough, test isolation, boot re-hook).
+- README / README_EN: "Boot Self-Healing" → "Manual Recovery After Reboot (no system-level registration)".
+
 ## v2.1.10 — 2026-09-05
 
 ### Added (distribution-friendly boot self-healing)

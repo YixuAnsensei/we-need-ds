@@ -76,7 +76,7 @@ sequenceDiagram
    * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
    * **Host Hooks (where supported)**: SessionStart hook initializes the background proxy; UserPromptSubmit hook revives it automatically if dead; SessionEnd hook restores all provider URLs.
-   * **Boot Self-Healing (host-hook independent)**: Windows shutdown/restart kills the daemon and bypasses every hook, leaving providers.json pointing at a dead proxy port. `node lib/ctl.js boot` self-heals from the ledger's `enabled` flag — revives the daemon + restores orphans + re-hooks, or cleans up a stray process when disabled. **Logon autostart is auto-registered the first time you run `/we-need-ds:on`** (a silent `.vbs` in the user Startup folder — no admin, zero manual steps), making this the only reliable revival path when host hooks don't fire (see "Boot Self-Healing" below).
+   * **Boot Self-Healing (host-hook independent)**: Windows shutdown/restart kills the daemon and bypasses every hook, leaving providers.json pointing at a dead proxy port. `node lib/ctl.js boot` self-heals from the ledger's `enabled` flag — revives the daemon + restores orphans + re-hooks, or cleans up a stray process when disabled. After a reboot, run `/we-need-ds:on` (or `node lib/ctl.js boot`) once to recover — the plugin deliberately registers nothing at the system level (see "Manual Recovery After Reboot" below).
    * **Always-on daemon**: stays resident by default (`idleAutoShutdownMinutes: 0`).
    * **100% Zero-Touch for Non-Target Models**: Claude, GPT, Gemini, Qwen models pass through with pure byte-level streaming.
 
@@ -125,24 +125,16 @@ sequenceDiagram
 
 ---
 
-## 🔌 Boot Self-Healing (auto-enabled, no manual registration)
+## 🔌 Manual Recovery After Reboot (no system-level registration)
 
-Windows shutdown/restart **kills the daemon outright** and bypasses every session hook — providers.json is left pointing at a dead proxy port, so if the host hooks don't fire after boot, every provider is broken. `ctl boot` is the **host-hook-independent** self-heal: it reads the ledger's `enabled` flag — when enabled it revives the daemon + restores orphans + re-hooks; when disabled it cleans up a stray process.
+Windows shutdown/restart **kills the daemon outright** and bypasses every session hook — providers.json is left pointing at a dead proxy port. This plugin **deliberately performs no system-level persistence** (no scheduled tasks, no Startup-folder entries): a plugin should be a plugin — it doesn't silently modify your system, and uninstalling leaves nothing behind.
 
-**The first time you run `/we-need-ds:on`, it auto-registers logon autostart**: a silent `we-need-ds-boot.vbs` is written into the current user's Startup folder (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup`), which runs `ctl boot` hidden on every logon. Properties:
+So **after a reboot, or after fully restarting cc-haha / Claude Code**, start interception once explicitly (same as invoking any skill):
 
-- **No admin required**: the Startup folder is writable by a normal user (a `schtasks /sc onlogon` scheduled task needs elevation on Win11, so it was dropped);
-- **Zero manual steps**: downstream users get it registered automatically on their first enable — they never need to know a registration command;
-- **Harmless when resident**: on boot it self-heals per the ledger's `enabled` flag — when interception is off it only cleans up strays and never turns the proxy on by itself;
-- **Removable anytime**: `node lib/ctl.js autostart uninstall`.
+- Run `/we-need-ds:on` in Claude Code — revives the daemon + restores orphans + re-hooks from the ledger, in one step;
+- Or run `node "<CACHE>\lib\ctl.js" boot` in a terminal — the host-hook-independent equivalent, self-healing per the ledger's `enabled` flag (enabled → revive daemon + restore orphans + re-hook; disabled → clean up strays).
 
-```powershell
-node "<CACHE>\lib\ctl.js" autostart status      # check whether it's registered
-node "<CACHE>\lib\ctl.js" autostart install     # manual re-register (rarely needed; `on` does it)
-node "<CACHE>\lib\ctl.js" autostart uninstall   # remove boot autostart
-```
-
-> Trigger manually once: `node "<CACHE>\lib\ctl.js" boot`.
+In-session self-healing (the UserPromptSubmit hook: every new message checks the daemon and revives + re-hooks if it's dead) still works on hosts that support plugin hooks, and doesn't conflict with the manual start above.
 
 ---
 
