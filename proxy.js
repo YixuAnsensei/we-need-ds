@@ -384,10 +384,12 @@ const server = http.createServer((req, res) => {
     req.on('data', c => ctlChunks.push(c));
     req.on('end', () => {
       let action = '';
-      try { action = (JSON.parse(Buffer.concat(ctlChunks).toString('utf8')) || {}).action || ''; } catch (e) {}
+      let ctlBody = {};
+      try { ctlBody = JSON.parse(Buffer.concat(ctlChunks).toString('utf8')) || {}; } catch (e) {}
+      action = ctlBody.action || '';
       let result;
       if (action === 'on') {
-        result = state.enableInterception(config);
+        result = state.enableInterception(config, { providerId: ctlBody.providerId || null });
       } else if (action === 'off') {
         result = state.disableInterception(config);
       } else if (action === 'arm') {

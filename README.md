@@ -113,13 +113,21 @@ sequenceDiagram
 
 ### 🅰️ 在 [cc-haha](https://github.com/NanmiCoder/cc-haha) 中使用
 
-1. **先把正在用的服务商设为默认**：
-   * cc-haha 的 sidecar 转发时会剥掉路径前缀，代理只能靠 API Key 识别来源、无法从请求知道"你当下切到了哪个 provider"，因此插件以 `activeId`（默认服务商）作为接管标记。**开启前请在 cc-haha 里把你当前真正要用的那个 DeepSeek Pro 服务商设为默认**，插件才会接管它。
-   * **接管与否只看该 provider 声明的 `models` 字段**：插件读取 `providers.json` 里这个服务商的 `models`（main/haiku/sonnet/opus 等映射），只要其中任一模型名命中 DeepSeek Pro 判定（在 `targetModels` 列表内，或归一化后含 `deepseek|ds` 且含 `v4|pro|flash`）才接管。像 9Router 这类中转站，即使它**实际能转发** DeepSeek 模型，只要它的 `models` 字段里没写 deepseek 系模型名，插件就判定它"非 DS provider"而**不接管**（保持直连、不裁剪）。所以请确保你设为默认的那个服务商，其 `models` 里确实声明了 DeepSeek Pro 模型——正常使用前你本来就会先切到 DeepSeek 模型，这一步天然满足。
+> **⚠️ 先读：接管会改写 providers.json，且关机/重启后依然保留**
+> 本插件的接管方式是**把被选中 provider 的 `baseUrl` 改写为本地代理地址**（`http://127.0.0.1:20329`）。这个改写写进的是 cc-haha 的配置文件 `~/.claude/cc-haha/providers.json`，**关机、重启、关闭 cc-haha 都不会自动撤销它**。因此：
+> - 只要 daemon 还活着，一切正常；
+> - 若 daemon 死了（重启会直接杀死它）而本体还指向代理端口，那个 provider 就"连不上"了——但**不会全盘卡死**：接管时插件同时生成了一份 `· 直连副本`（`baseUrl` 指向你的原始真实上游），其余未被接管的 provider 也全部保持直连。你随时可以切到副本或任意未接管 provider 发消息、并跑恢复命令。
+> - **养成习惯**：退出 cc-haha / 关机前执行一次 `/we-need-ds:off`，把本体还原直连、清除副本，账本干净。忘了也没关系，见下方"重启后的手动恢复"。
+
+1. **选择要接管哪个服务商（两种方式，二选一）**：
+   * **方式 A · 插件代选（推荐，无需手动预设置）**：直接执行 `/we-need-ds:on` 或 `/we-need-ds`，插件会先列出你配置的所有 provider（标注哪个含 DeepSeek Pro 模型 `🎯`、哪个是当前默认 `⭐`），若含 DS 模型的有多个会让你选一个，然后接管它。**接管非默认 provider 时插件会自动把 cc-haha 的 `activeId` 切到它**——因为 sidecar 按 `activeId` 路由，不同步切换的话新会话仍会走旧 provider。
+   * **方式 B · 手动预设置**：先在 cc-haha 里把你真正要用的那个 DeepSeek Pro 服务商设为默认，再执行 `/we-need-ds:on`（省略 `--provider`），插件直接接管当前默认。
+   * 终端等价命令：`node lib/ctl.js list` 查看清单；`node lib/ctl.js on --provider <id 或名称>` 指定接管目标。
+   * **接管与否只看该 provider 声明的 `models` 字段**：插件读取 `providers.json` 里这个服务商的 `models`（main/haiku/sonnet/opus 等映射），只要其中任一模型名命中 DeepSeek Pro 判定（在 `targetModels` 列表内，或归一化后含 `deepseek|ds` 且含 `v4|pro|flash`）才接管。像 9Router 这类中转站，即使它**实际能转发** DeepSeek 模型，只要它的 `models` 字段里没写 deepseek 系模型名，插件就判定它"非 DS provider"而**不接管**（保持直连、不裁剪）。所以请选择 `models` 里确实声明了 DeepSeek Pro 模型的服务商。
    * 其余服务商的 `baseUrl` 一律不动，保持各自真实上游——这正是防死锁的关键：daemon 万一死了，你还有大量直连入口和自动生成的直连副本可切换。
-2. **开启即接管默认 + 建副本**：
-   * 执行 `/we-need-ds:on`（或终端 `node lib/ctl.js on`）：拉起 daemon、把默认 DS 服务商的 `baseUrl` 切到代理端口、并复制一份 `· 直连副本`（指向原始真实上游）作为逃生口。
-   * 切换默认服务商后再 `on`：旧本体自动还原直连、新默认被接管，副本始终只保留一份。
+2. **开启即接管 + 建副本**：
+   * 执行 `/we-need-ds:on`（或 `on --provider <id>`）：拉起 daemon、把目标 DS 服务商的 `baseUrl` 切到代理端口、并复制一份 `· 直连副本`（指向原始真实上游）作为逃生口。
+   * 切换接管目标后再 `on`：旧本体自动还原直连、新目标被接管，副本始终只保留一份。
 3. **退出前手动 off（推荐习惯）**：
    * 关闭 cc-haha / 关机前执行 `/we-need-ds:off`，把本体还原直连并清除副本，账本干净。即便忘了 off，重启后也能从副本或任意未接管 provider 直连发消息、再跑 `boot`/`on` 恢复，不会卡死。
 4. **日常使用**：
@@ -159,7 +167,8 @@ sequenceDiagram
 | **`/we-need-ds:doctor`** | **一键深度体检** | 排查代理端口、环境模式、Provider 池接管与连通状态 |
 | **`/we-need-ds:test`** | **运行轮次结构感知自测试套件** | 覆盖判定轮极简、执行轮放行、非目标模型透传、M1/M3 边界、非 DS 安全底线的完整断言 |
 | **`/we-need-ds:status`** | **查看当前运行与拦截状态** | 查看当前代理进程、拦截开关、被接管的提供商清单与日志 |
-| **`/we-need-ds:on`** | **手动开启拦截环境** | 接管当前默认 DS 服务商并建直连副本，判定轮常态进入极简模拟 |
+| **`/we-need-ds:list`** | **列出全部 provider 及接管建议** | 查看每个 provider 是否含 DS 模型、哪个是当前默认、哪个已在代理中，再决定接管谁 |
+| **`/we-need-ds:on`** | **手动开启拦截环境** | 默认接管当前默认 DS 服务商；`on --provider <id>` 可指定接管任意含 DS 模型的服务商（自动同步 activeId）并建直连副本 |
 | **`/we-need-ds:off`** | **手动关闭拦截并还原端点** | 还原被接管的本体到真实上游并清除直连副本 |
 | **`/we-need-ds:restart`** | **优雅重启代理 daemon** | 代理卡死（如被大量挂起的上游请求占满）或更新代码后需重载时：杀旧进程→拉起新 daemon→按账本自动重新接管 |
 

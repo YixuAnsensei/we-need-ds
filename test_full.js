@@ -614,6 +614,45 @@ async function main() {
       const rJ3 = state.enableInterception(cfgJ);
       pj = provJ();
       check('J10 activeId 是非 DS provider → 不接管不建副本 (全直连)', pj.providers.find(p => p.id === 'j-other').baseUrl === 'http://127.0.0.1:2100' && !pj.providers.some(p => p.weNeedDsCopy) && rJ3.activeHooked === null);
+
+      console.log('===== Phase K: on --provider 指定接管目标 =====');
+      const mkProvK = () => ({
+        activeId: 'k-other',
+        providers: [
+          { id: 'k-ds', name: 'K-DS', baseUrl: 'http://127.0.0.1:2099', apiKey: 'sk-k-ds', models: { m1: 'deepseek-v4-pro' } },
+          { id: 'k-ds2', name: 'K-DS2', baseUrl: 'http://127.0.0.1:2101', apiKey: 'sk-k-ds2', models: { m1: 'deepseek-v4-flash' } },
+          { id: 'k-other', name: 'K-Other', baseUrl: 'http://127.0.0.1:2100', apiKey: 'sk-k-other', models: { m1: 'gpt-5' } }
+        ]
+      });
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify(mkProvK(), null, 2));
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+
+      const lk = state.listProviders(cfgJ);
+      check('K1 listProviders 列出全部非副本 provider 并标注 DS/默认', lk.ok && lk.providers.length === 3 && lk.providers.find(p => p.id === 'k-ds').hasTargetModels === true && lk.providers.find(p => p.id === 'k-other').hasTargetModels === false && lk.providers.find(p => p.id === 'k-other').isDefault === true);
+      check('K2 listProviders DS 优先排序', lk.providers[0].hasTargetModels === true && lk.providers[1].hasTargetModels === true && lk.providers[2].hasTargetModels === false);
+
+      const rK = state.enableInterception(cfgJ, { providerId: 'k-ds' });
+      pj = provJ();
+      check('K3 指定非默认 DS provider 被接管', rK.ok && pj.providers.find(p => p.id === 'k-ds').baseUrl.includes('21329'));
+      check('K4 接管时 activeId 同步切换为被接管 provider', pj.activeId === 'k-ds' && rK.activeSwitched === true);
+      check('K5 其余 provider 保持直连', pj.providers.find(p => p.id === 'k-other').baseUrl === 'http://127.0.0.1:2100' && pj.providers.find(p => p.id === 'k-ds2').baseUrl === 'http://127.0.0.1:2101');
+      check('K6 副本指向被接管 provider 原始上游', pj.providers.find(p => p.id === 'wnd-copy-k-ds').baseUrl === 'http://127.0.0.1:2099');
+
+      state.disableInterception(cfgJ);
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify(mkProvK(), null, 2));
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+      const rK2 = state.enableInterception(cfgJ, { providerId: 'K-DS2' });
+      pj = provJ();
+      check('K7 按名称指定接管目标', rK2.ok && pj.providers.find(p => p.id === 'k-ds2').baseUrl.includes('21329') && pj.activeId === 'k-ds2');
+
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify(mkProvK(), null, 2));
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+      const rK3 = state.enableInterception(cfgJ, { providerId: 'k-other' });
+      check('K8 指定非 DS provider 接管被拒绝', rK3.ok === false && !!rK3.reason);
+      const rK4 = state.enableInterception(cfgJ, { providerId: 'no-such-id' });
+      check('K9 指定不存在的 provider 被拒绝', rK4.ok === false && !!rK4.reason);
+      pj = provJ();
+      check('K10 拒绝路径不污染 providers.json', pj.activeId === 'k-other' && !pj.providers.some(p => p.weNeedDsCopy) && pj.providers.every(p => !p.baseUrl.includes('21329')));
     } finally {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}

@@ -88,13 +88,21 @@ sequenceDiagram
 
 ### 🅰️ Using with [cc-haha](https://github.com/NanmiCoder/cc-haha)
 
-1. **Set the provider you're actually using as the default first**:
-   * cc-haha's sidecar strips the path prefix when forwarding, so the proxy can only identify the source by API Key and cannot tell from the request "which provider you just switched to". The plugin therefore uses `activeId` (the default provider) as the takeover marker. **Before enabling, set the DeepSeek Pro provider you're really using as the default in cc-haha**, and the plugin will hook it.
-   * **Takeover depends only on the `models` field the provider declares**: the plugin reads this provider's `models` map (main/haiku/sonnet/opus, etc.) from `providers.json`, and hooks it only if any declared model name matches the DeepSeek Pro check (in `targetModels`, or normalized to contain `deepseek|ds` plus `v4|pro|flash`). A relay like 9Router, even if it **can actually forward** DeepSeek models, is treated as "non-DS provider" and **not hooked** (kept direct, no trimming) as long as its `models` field doesn't declare a deepseek model name. So make sure the provider you set as default actually declares a DeepSeek Pro model in its `models` — in normal use you switch to a DeepSeek model first anyway, so this is naturally satisfied.
+> **⚠️ Read first: takeover rewrites providers.json, and the edit persists across shutdown/reboot**
+> Takeover works by **rewriting the selected provider's `baseUrl` to the local proxy address** (`http://127.0.0.1:20329`). This edit is written into cc-haha's config file `~/.claude/cc-haha/providers.json` and is **NOT automatically undone by shutting down, rebooting, or closing cc-haha**. So:
+> - As long as the daemon is alive, everything works normally;
+> - If the daemon dies (a reboot kills it outright) while the body still points at the proxy port, that provider becomes "unreachable" — but **nothing is fully stuck**: takeover also creates a `· direct copy` (whose `baseUrl` points at your original real upstream), and every non-hooked provider stays direct. You can always switch to the copy or any direct provider to send messages and run recovery commands.
+> - **Good habit**: run `/we-need-ds:off` once before closing cc-haha / shutting down to restore the body to direct and remove the copy — clean ledger. Forget it and you're still fine; see "Manual recovery after reboot" below.
+
+1. **Pick which provider to hook (two ways, choose one)**:
+   * **Way A · Plugin-assisted selection (recommended, no manual pre-setting)**: just run `/we-need-ds:on` or `/we-need-ds`. The plugin first lists all your providers (marking which declare DeepSeek Pro models `🎯` and which is the current default `⭐`), asks you to choose if multiple DS providers exist, then hooks your pick. **Hooking a non-default provider automatically switches cc-haha's `activeId` to it** — the sidecar routes by `activeId`, so without the sync new sessions would still go to the old provider.
+   * **Way B · Manual pre-setting**: first set the DeepSeek Pro provider you really use as the default in cc-haha, then run `/we-need-ds:on` (omit `--provider`) and the plugin hooks the current default.
+   * Terminal equivalents: `node lib/ctl.js list` to see the roster; `node lib/ctl.js on --provider <id or name>` to hook a specific target.
+   * **Takeover depends only on the `models` field the provider declares**: the plugin reads this provider's `models` map (main/haiku/sonnet/opus, etc.) from `providers.json`, and hooks it only if any declared model name matches the DeepSeek Pro check (in `targetModels`, or normalized to contain `deepseek|ds` plus `v4|pro|flash`). A relay like 9Router, even if it **can actually forward** DeepSeek models, is treated as "non-DS provider" and **not hooked** (kept direct, no trimming) as long as its `models` field doesn't declare a deepseek model name. So pick a provider whose `models` actually declares a DeepSeek Pro model.
    * Every other provider's `baseUrl` stays untouched, pointing at its own real upstream — this is exactly the deadlock-prevention key: if the daemon ever dies, you still have plenty of direct entry points plus the auto-generated direct copy to switch to.
-2. **Enable = hook the default + create the copy**:
-   * Run `/we-need-ds:on` (or `node lib/ctl.js on` in a terminal): revives the daemon, switches the default DS provider's `baseUrl` to the proxy port, and clones a `· direct copy` (pointing at the original real upstream) as the escape hatch.
-   * Switch the default provider and run `on` again: the old body is auto-restored to direct, the new default gets hooked, and only one copy is ever kept.
+2. **Enable = hook the target + create the copy**:
+   * Run `/we-need-ds:on` (or `on --provider <id>`): revives the daemon, switches the target DS provider's `baseUrl` to the proxy port, and clones a `· direct copy` (pointing at the original real upstream) as the escape hatch.
+   * Switch the takeover target and run `on` again: the old body is auto-restored to direct, the new target gets hooked, and only one copy is ever kept.
 3. **Run `off` before quitting (recommended habit)**:
    * Before closing cc-haha / shutting down, run `/we-need-ds:off` to restore the body to direct and remove the copy — clean ledger. Even if you forget, after a reboot you can still send messages via the copy or any non-hooked provider and run `boot`/`on` to recover; nothing gets stuck.
 4. **Daily usage**:
@@ -129,7 +137,8 @@ sequenceDiagram
 | **`/we-need-ds:doctor`** | **Health diagnostic** | Inspects proxy port, environment mode, provider pool takeover and connectivity status |
 | **`/we-need-ds:test`** | **Run test simulation suite** | Assertions covering decision-turn minimal mode, execution-turn passthrough, non-target passthrough, M1/M3 edge cases, and the non-DS safety baseline |
 | **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, interception switch, hooked providers, and logs |
-| **`/we-need-ds:on`** | **Enable interception** | Hooks the current default DS provider and creates the direct copy; decision turns enter minimal simulation by default |
+| **`/we-need-ds:list`** | **List all providers with takeover hints** | Shows which providers declare DS models `🎯`, which is the current default `⭐`, and which is already proxied `🔌`, so you can decide what to hook |
+| **`/we-need-ds:on`** | **Enable interception** | Hooks the current default DS provider by default; `on --provider <id>` hooks any DS-model provider you pick (auto-syncs activeId) and creates the direct copy |
 | **`/we-need-ds:off`** | **Force disable & restore** | Restores the hooked body to its real upstream and removes the direct copy |
 | **`/we-need-ds:restart`** | **Gracefully restart the daemon** | When the proxy is wedged (e.g. full of stalled upstream requests) or after a code update: kills the old process → spawns a fresh daemon → re-hooks providers from the ledger |
 

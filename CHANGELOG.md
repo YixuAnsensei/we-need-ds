@@ -3,6 +3,19 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.3.0 — 2026-09-07
+
+### Added (provider selection at takeover time)
+- **`on` no longer requires pre-setting the default in cc-haha.** New `node lib/ctl.js list` prints every provider with markers: `🎯` declares DeepSeek Pro models, `⭐` current default, `🔌` already proxied — DS-capable ones sorted first. `on --provider <id|name>` hooks a specific provider directly; the skills (`/we-need-ds` and `/we-need-ds:on`) now list providers first and ask the user to pick when multiple DS-capable ones exist.
+- **Hooking a non-default provider auto-syncs `activeId`.** cc-haha's sidecar routes by `activeId` (verified in the shipped sidecar binary: anthropic-format providers are launched with `baseUrl` directly, OpenAI-format ones with `/proxy/providers/<id>` resolved from the active provider at session start), so takeover of a non-active provider is meaningless unless activeId moves with it. `enableInterception` now sets `data.activeId` to the chosen provider and reports `activeSwitched: true`.
+- **Guardrails**: `--provider` pointing at a non-DS provider or an unknown id is rejected with a clear reason *before* any state write; the rejection path leaves providers.json untouched.
+
+### Docs
+- README (zh + en): prominent warning box at the top of the cc-haha section — takeover rewrites `providers.json` and **the edit persists across shutdown/reboot**; the direct copy + untouched providers are the fallback; both usage paths documented (plugin-assisted selection / manual pre-setting). Command matrix adds `list` and `on --provider`.
+
+### Tests
+- New Phase K (test_full, +10): listProviders markers/sorting, hook non-default DS provider, activeId sync, others untouched, copy carries real upstream, name-based targeting, non-DS/unknown rejection, rejection leaves no pollution. All 99 assertions green.
+
 ## v2.2.1 — 2026-09-07
 
 ### Fixed (reliable daemon port release)
