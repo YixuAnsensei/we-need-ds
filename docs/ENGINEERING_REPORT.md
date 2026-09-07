@@ -1,6 +1,6 @@
 # we-need-ds 插件工程开发报告
 
-> 文档版本：对应插件 semver `2.2.0` / 机制版本 `v5.1`
+> 文档版本：对应插件 semver `2.3.0` / 机制版本 `v5.1`
 > 撰写日期：2026-09-07
 > 文档性质：完整工程实现说明。面向接手/评审的工程师与智能体，实事求是描述"实现了什么、如何实现、为什么这样设计、遇到过什么问题、当前边界在哪"，不包含开发方向上的倾向性建议。
 
@@ -83,7 +83,7 @@ DeepSeek Harness（DSH）社区的观察与本项目实测共同确认：**DeepS
 | 宿主钩子 | `hooks/*.js` + `hooks/hooks.json` | SessionStart / UserPromptSubmit / SessionEnd 三钩子（仅支持 hooks 的宿主生效） |
 | 技能入口 | `skills/*/SKILL.md` | `/we-need-ds`、`:on`、`:off`、`:status`、`:doctor`、`:test`、`:restart` |
 | 子代理 | `agents/we-need-planner.md` | `/we-need-ds:plan` 只读深度规划器 |
-| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js` | 89 项断言自测试套件等 |
+| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js` | 99 项断言自测试套件等 |
 
 ### 2.3 数据文件布局
 
@@ -340,7 +340,7 @@ DS + 其他(末条非 user 的异常结构):
 
 ## 7. 测试体系
 
-`test_full.js` 共 **89 项断言**，全程隔离（端口 21329、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
+`test_full.js` 共 **99 项断言**，全程隔离（端口 21329、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
 
 | Phase | 覆盖 |
 | :--- | :--- |
@@ -400,6 +400,8 @@ DS + 其他(末条非 user 的异常结构):
 | ≤2.0.x | v4 及以前 | 全量接管 providers.json；首轮 arm 窗口裁剪 |
 | 2.1.x | **v5 → v5.1** | 轮次结构感知常态模拟（不限首轮）；执行轮全量+DSH 人格（v5.1）；失败即还原（2.1.12）；还原可逆+中途断开透明化（2.1.13）；开机自启动实现后又被彻底移除（2.1.10→2.1.11） |
 | **2.2.0** | v5.1 | **单服务商接管 + 直连副本逃生口**：根治重启死锁；两段式安全释放；账本剪枝与旧态自动迁移；hooks/ctl 输出与中英 README 同步 |
+| 2.2.1 | v5.1 | 统一 daemon 端口释放：`killDaemonOnPort` 杀进程后轮询确认端口真正释放，根治残留进程占端口导致的假接管 |
+| **2.3.0** | v5.1 | **接管时可选任意 provider**：`ctl list` 清单（🎯含DS/⭐默认/🔌代理中）+ `on --provider <id|名称>`；接管非默认 provider 自动同步 activeId（sidecar 按 activeId 路由）；拒绝路径零污染；中英 README 顶部显式告知"接管改写 providers.json 且关机后持久保留"根因与副本兜底 |
 
 > 两条编号线独立：文档中的 v5/v5.1 是**机制版本**（轮次感知 DSH 极简模拟算法的演进代号）；插件遵循 semver（`plugin.json`/CHANGELOG）。GitHub Releases 以 semver 为准。
 
@@ -421,7 +423,7 @@ we-need-ds/
 ├── skills/{we-need-ds,on,off,status,doctor,test,restart}/SKILL.md
 ├── commands/{plan,run}.md          # 斜杠指令 (CC 轨)
 ├── agents/we-need-planner.md       # 只读深度规划子代理
-├── test_full.js                    # 89 断言主套件 (Phase A-J)
+├── test_full.js                    # 99 断言主套件 (Phase A-K)
 ├── test_consume.js                 # 消费方视角测试
 ├── test_simulation.js              # 早期模拟测试
 ├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.2.0)
