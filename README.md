@@ -68,16 +68,18 @@ sequenceDiagram
 
 ## ✨ 核心特性矩阵
 
-1. **⚡ 全量 Provider 映射池与动态路由（Multi-Provider Pool & Dynamic Auth Routing）**：
-   * 自动接管 `providers.json` 中的所有服务商（9Router、BAI、YJS、商汤、OpenCode 等）；
-   * 收到请求时根据 API Key / Token 动态回源到各自真实的官方/中转上游地址，多窗口、多标签页切换模型零干扰。
+1. **⚡ 单服务商接管 + 直连副本逃生口（Single-Provider Hook & Direct-Copy Escape）**：
+   * 只接管 `providers.json` 中**当前默认（activeId）且确实提供 DeepSeek Pro 模型**的那一个服务商，其余服务商的 `baseUrl` 一律不动，保持各自真实上游；
+   * 接管的同时，为该服务商复制一份带 `· 直连副本` 后缀的临时 provider，其 `baseUrl` 指向**原始真实上游**——这就是逃生口：万一 daemon 死掉、本体指向死端口，你在 cc-haha 里切到副本即可立刻直连，再从容 `off`/`boot`/`on`；
+   * 副本同时充当**冗余账本**：即使 `runtime-state.json` 丢失/损坏，也能从副本的 `baseUrl` 把本体救回真实上游；
+   * 收到请求时根据 API Key / Token 动态回源到真实上游地址，多窗口、多标签页切换模型零干扰。
 2. **🎯 轮次结构感知极简模拟（Turn-Aware DSH Minimal, v5.1 全轮次人格统一）**：
    * 纯请求结构判定：末条为新 user 文本 = **判定轮**（等待模型规划），末条为 tool/tool_result = **执行轮**（工具续跑）；
    * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
    * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
 3. **🛡️ 多重防呆生命周期与无死锁保障**：
    * **宿主钩子自动接管**：SessionStart 钩子自启动、UserPromptSubmit 钩子每条新消息自检复活、SessionEnd 钩子会话结束批量还原（在支持插件 hooks 的宿主上生效）；
-   * **重启后手动恢复（不依赖宿主钩子，不做系统级注册）**：Windows 关机/重启会直接杀死 daemon 且绕过所有钩子，providers 会停留在指向死代理端口的"孤儿"状态。重启后执行一次 `/we-need-ds:on`（或终端 `node lib/ctl.js boot`）即可恢复——拉起 daemon + 修复孤儿 + 按账本接管。本插件不注册计划任务、不写 Startup 文件夹，卸载即干净（见下方"重启后的手动恢复"）；
+   * **重启后手动恢复（不依赖宿主钩子，不做系统级注册）**：Windows 关机/重启会直接杀死 daemon 且绕过所有钩子，被接管的本体会停留在指向死代理端口的"孤儿"状态。但**其余服务商和直连副本始终直连**，所以你总能发消息、也能跑恢复命令——不再有"全部指向死端口、连 on 都发不出"的死锁。恢复：在 cc-haha 切到直连副本（或任意未接管的 provider）后执行 `/we-need-ds:on`（或终端 `node lib/ctl.js boot`）——拉起 daemon + 修复孤儿 + 按账本重新接管。本插件不注册计划任务、不写 Startup 文件夹，卸载即干净（见下方"重启后的手动恢复"）；
    * **常驻守护**：daemon 默认常驻不退出（`idleAutoShutdownMinutes: 0`）；
    * **非目标模型 100% 零侵入**：Claude / GPT / Gemini / Qwen 纯字节流直通。
 
@@ -109,13 +111,17 @@ sequenceDiagram
 
 ## 🚀 使用指南
 
-### 🅰️ 在 [cc-haha](https://github.com/NanmiCoder/cc-haha) 中使用（极致懒人模式）
+### 🅰️ 在 [cc-haha](https://github.com/NanmiCoder/cc-haha) 中使用
 
-1. **零配置开箱即用**：
-   * 你的所有 Provider（9Router、YJS、商汤等）的 `baseUrl` 保持原本设置即可，无需任何手动改动！
-2. **多窗口自由切换**：
-   * 插件自动进行全量多 Provider 接管，你在任何窗口任意切换服务商，均可直接触发。
-3. **日常使用**：
+1. **先把正在用的服务商设为默认**：
+   * cc-haha 的 sidecar 转发时会剥掉路径前缀，代理只能靠 API Key 识别来源、无法从请求知道"你当下切到了哪个 provider"，因此插件以 `activeId`（默认服务商）作为接管标记。**开启前请在 cc-haha 里把你当前真正要用的那个 DeepSeek Pro 服务商设为默认**，插件才会接管它。
+   * 其余服务商的 `baseUrl` 一律不动，保持各自真实上游——这正是防死锁的关键：daemon 万一死了，你还有大量直连入口和自动生成的直连副本可切换。
+2. **开启即接管默认 + 建副本**：
+   * 执行 `/we-need-ds:on`（或终端 `node lib/ctl.js on`）：拉起 daemon、把默认 DS 服务商的 `baseUrl` 切到代理端口、并复制一份 `· 直连副本`（指向原始真实上游）作为逃生口。
+   * 切换默认服务商后再 `on`：旧本体自动还原直连、新默认被接管，副本始终只保留一份。
+3. **退出前手动 off（推荐习惯）**：
+   * 关闭 cc-haha / 关机前执行 `/we-need-ds:off`，把本体还原直连并清除副本，账本干净。即便忘了 off，重启后也能从副本或任意未接管 provider 直连发消息、再跑 `boot`/`on` 恢复，不会卡死。
+4. **日常使用**：
    * 在聊天框直接输入：
      ```bash
      /we-need-ds 帮我重构用户鉴权模块并编写测试用例
@@ -152,22 +158,24 @@ sequenceDiagram
 | **`/we-need-ds:doctor`** | **一键深度体检** | 排查代理端口、环境模式、Provider 池接管与连通状态 |
 | **`/we-need-ds:test`** | **运行轮次结构感知自测试套件** | 覆盖判定轮极简、执行轮放行、非目标模型透传、M1/M3 边界、非 DS 安全底线的完整断言 |
 | **`/we-need-ds:status`** | **查看当前运行与拦截状态** | 查看当前代理进程、拦截开关、被接管的提供商清单与日志 |
-| **`/we-need-ds:on`** | **手动开启拦截环境** | 显式开启全量接管，判定轮常态进入极简模拟 |
-| **`/we-need-ds:off`** | **手动关闭拦截并还原端点** | 随时手动将所有 Provider 恢复到各自原有的真实地址 |
+| **`/we-need-ds:on`** | **手动开启拦截环境** | 接管当前默认 DS 服务商并建直连副本，判定轮常态进入极简模拟 |
+| **`/we-need-ds:off`** | **手动关闭拦截并还原端点** | 还原被接管的本体到真实上游并清除直连副本 |
 | **`/we-need-ds:restart`** | **优雅重启代理 daemon** | 代理卡死（如被大量挂起的上游请求占满）或更新代码后需重载时：杀旧进程→拉起新 daemon→按账本自动重新接管 |
 
 ---
 
 ## 🔌 重启后的手动恢复（本插件不做任何系统级注册）
 
-Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话钩子——providers.json 会停留在指向死代理端口的"孤儿"状态。本插件**刻意不做任何系统层面的持久化**（不注册计划任务、不写 Startup 文件夹）：插件就应该是插件，装完不偷偷改系统，卸载即干净。
+Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话钩子——被接管的本体会停留在指向死代理端口的"孤儿"状态。本插件**刻意不做任何系统层面的持久化**（不注册计划任务、不写 Startup 文件夹）：插件就应该是插件，装完不偷偷改系统，卸载即干净。
+
+**v2.2.0 起死锁已被根治**：代理只接管当前默认的那一个服务商，其余服务商和自动生成的 `· 直连副本` 始终保持直连。所以重启后哪怕 daemon 死了，你依然能正常发消息（走任意未接管 provider 或副本），恢复命令也发得出去——不再有"全部指向死端口、连 on 都发不出"的死锁。
 
 因此**电脑重启后、或 cc-haha / Claude Code 完全重开后**，需要显式启动一次拦截（和平时用 skill 的方式一样）：
 
 - 在 Claude Code 里执行 `/we-need-ds:on` —— 拉起 daemon + 修复孤儿 + 按账本接管，一步到位；
 - 或在终端跑 `node "<CACHE>\lib\ctl.js" boot` —— 不依赖宿主的等价恢复命令，读账本 `enabled` 状态自愈（开启态拉起 daemon + 修复孤儿 + 重新接管，关闭态清理残留）。
 
-会话进行中的自愈（UserPromptSubmit 钩子：每条新消息自检 daemon、死亡则复活重接管）在支持插件 hooks 的宿主上仍然生效，与上述手动启动不冲突。
+会话进行中的自愈（UserPromptSubmit 钩子：每条新消息自检 daemon、死亡则复活重接管）在支持插件 hooks 的宿主（如原生 Claude Code）上仍然生效，与上述手动启动不冲突。cc-haha 的 sidecar 是常驻 server 模式、不执行插件 hooks，所以 cc-haha 下以手动 `on`/`boot` 为准。
 
 **失败即还原（防死锁）**：任何恢复路径（`on` / `boot` / 钩子）如果拉起 daemon 失败，都会把仍指向代理端口的 provider **自动还原为真实上游直连**——绝不留"端点指向死代理、用户无法使用、恢复命令也发不出"的死锁状态。还原不是单向的：**下一条消息若账本 `enabled` 且 daemon 存活、无 provider 被接管，UserPromptSubmit 钩子会自动重新接管**——恢复后的第一轮立即回到代理+裁剪。`status` / `doctor` 若检测到 provider 指向代理端口但 daemon 未运行，会打印醒目告警并给出恢复命令。
 
@@ -223,7 +231,7 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
 ## ⚠️ 边界与注意事项
 
 1. **账本信任链**：插件把 provider 的 `baseUrl` 改写为代理地址时，会把"改写瞬间的 baseUrl"记为真实上游（`originalUrl`）。因此**请确保 cc-haha 里每个 provider 的 baseUrl 指向的是真实上游**（官方端点或你自己的中转，如 9router 的 `:20128`）。若你把某个 provider 手动配成了**另一个代理地址**，插件会把这个代理地址当作真实上游记录并还原——这是设计边界，不是 bug。开启拦截前用 `/we-need-ds:doctor` 核对各 provider 的原始上游是否符合预期。
-2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.1.x`）。两者独立编号：机制 v5.1 对应插件 2.1.x 系列。GitHub Releases 以 semver 为准。
+2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.1.x`）。两者独立编号：机制 v5.1 对应插件 2.x 系列（当前 2.2.x）。GitHub Releases 以 semver 为准。
 3. **端口占用**：代理默认绑定 `127.0.0.1:20329`。若被占用请改 `config.json` 的 `port`；插件在端口变更时会自动把指向旧端口的 provider 先还原再按新端口接管，不会把代理地址误记为真实上游。
 4. **测试隔离（跑测试套件必读）**：自测试套件会改写 providers.json 与 runtime-state.json。为避免污染你正在使用的生产环境，跑测试前务必设置三个隔离环境变量，让测试全程读写临时目录、绝不碰生产文件：`WE_NEED_DS_TEST_PORT`（测试端口）、`WE_NEED_DS_PROVIDERS_PATH`（临时 providers.json 路径）、`WE_NEED_DS_DATA_DIR`（临时数据目录）。`test_full.js` / `test_consume.js` 已内置自动隔离（用 `os.tmpdir()` 临时目录），直接 `node test_full.js` 即可；手动跑 `ctl on/off` 等接管命令时若不想碰生产，同样设这三个变量。
 

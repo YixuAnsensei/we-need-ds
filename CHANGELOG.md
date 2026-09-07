@@ -3,6 +3,21 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.2.0 — 2026-09-07
+
+### Changed (root-cause fix: single-provider takeover + direct-copy escape hatch)
+- **The proxy now hooks only the *current default* provider, not all 27.** Previously `enableInterception` rewrote every provider's `baseUrl` to the proxy port. That made a dead daemon a global outage: after a reboot (no autostart, by design) *every* provider pointed at a dead port, and the recovery command itself couldn't reach any model. Now only the `activeId` provider (and only if it actually serves a DeepSeek Pro model) is hooked; all other providers keep their real upstream untouched.
+- **A temporary "· 直连副本" (direct-copy) provider is created for the hooked provider.** The copy carries the *original* real `baseUrl` and is a normal, selectable provider in cc-haha. This is the escape hatch: if the daemon is dead and the hooked body points at a dead port, the user switches to the copy in cc-haha's provider list and is immediately back to direct — then can run `off`/`boot`/`on` normally. The copy is removed only *after* the body is verified restored to direct (two-phase release: restore → re-read verify → delete copy), so a crash mid-release never strands the user without an escape.
+- **The copy doubles as a redundant ledger.** `restoreAllProxied` resolves a hooked body's real upstream from the ledger *or* the copy's `baseUrl`, so even if `runtime-state.json` is lost/corrupted the body is still restored correctly (verified by scenario test).
+- **`enableInterception` migrates old state**: any provider still pointing at a proxy port (from a pre-2.2.0 full-hook) is restored first, and stale copies removed, before the single-provider hook is applied. Switching the default provider and re-running `on` releases the previous body and re-hooks the new one, keeping exactly one copy.
+- **`detectDeadState` / `recoverOrphans` / `disableInterception`** all route through the shared `releaseToDirect` helper and ignore copy providers when counting orphans.
+
+### Docs
+- README: cc-haha usage now instructs users to **set the provider they are actually using as the default before `on`** (the proxy keys off `activeId`), and explains the direct-copy escape hatch and the "manually `off` before quitting" habit.
+
+### Tests
+- New Phase J (test_full, +10): single-provider hook, non-active untouched, copy created with real upstream, ledger pruned to one, idempotent re-`on` (no duplicate copies), off restores + removes copy, **ledger-lost → copy rescues body**, non-DS active → no hook/no copy. Standalone 6-scenario end-to-end simulation (reboot-deadlock → copy escape → boot recovery → default-switch → off → ledger-lost) all green. All prior 79 assertions still pass.
+
 ## v2.1.13 — 2026-09-06
 
 ### Fixed (recovery is reversible — same-turn trim restoration)

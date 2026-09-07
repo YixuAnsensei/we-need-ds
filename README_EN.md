@@ -42,7 +42,7 @@ sequenceDiagram
     participant Router as 9router / Upstream API / Official Endpoints
 
     User->>CC: Command: /we-need-ds Refactor authentication system
-    Note over CC,Proxy: Session starts / Command invoked: Proxy ready, multi-provider pool attached
+    Note over CC,Proxy: Session starts / Command invoked: transparent proxy ready, current default provider hooked with a direct-copy escape hatch
     CC->>Proxy: Decision Turn Request (new task text, carrying 30+ MCP tool schemas)
     
     rect rgb(235, 248, 255)
@@ -56,7 +56,7 @@ sequenceDiagram
     CC->>Proxy: Execution Turn Request (tool / tool_result)
     
     rect rgb(240, 253, 244)
-    Note over Proxy: 100% Unrestricted:<br/>All MCPs and skills fully released
+    Note over Proxy: v5.1 Full release: all MCPs/skills restored<br/>Persona also switches to the DSH one-liner (executionDshPersona)
     end
     
     Proxy->>Router: Forward untouched
@@ -67,16 +67,18 @@ sequenceDiagram
 
 ## ✨ Key Features
 
-1. **⚡ Multi-Provider Pool & Dynamic Auth Routing**:
-   * Automatically hooks all provider instances in `providers.json` (9Router, BAI, YJS, SenseTime, OpenCode, etc.).
-   * Dynamically resolves and routes incoming requests back to each provider's real upstream URL using API Key / Auth headers. Switching providers across tabs works seamlessly.
+1. **⚡ Single-Provider Hook & Direct-Copy Escape**:
+   * Hooks **only the provider that is actually in use** — the current default (`activeId`) in `providers.json` that genuinely offers DeepSeek Pro models. Every other provider keeps its real upstream `baseUrl` untouched.
+   * At hook time it also clones a temporary `· direct copy` provider whose `baseUrl` points at the **original real upstream** — that's your escape hatch: if the daemon ever dies and the body points at a dead port, switch to the copy in cc-haha and you're connected directly again, then run `off`/`boot`/`on` at leisure.
+   * The copy doubles as a **redundant ledger**: even if `runtime-state.json` is lost or corrupted, the body's real upstream can be recovered from the copy's `baseUrl`.
+   * Incoming requests are routed back to their real upstream dynamically by API Key / Token, so switching models across windows and tabs causes zero interference.
 2. **🎯 Turn-Aware DSH Minimal Simulation (v5.1, unified persona on all turns)**:
    * Pure request-structure detection: last message is fresh user text = **decision turn** (model plans), last message is tool/tool_result = **execution turn** (tool follow-up);
    * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor);
    * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
-   * **Host Hooks (where supported)**: SessionStart hook initializes the background proxy; UserPromptSubmit hook revives it automatically if dead; SessionEnd hook restores all provider URLs.
-   * **Boot Self-Healing (host-hook independent)**: Windows shutdown/restart kills the daemon and bypasses every hook, leaving providers.json pointing at a dead proxy port. `node lib/ctl.js boot` self-heals from the ledger's `enabled` flag — revives the daemon + restores orphans + re-hooks, or cleans up a stray process when disabled. After a reboot, run `/we-need-ds:on` (or `node lib/ctl.js boot`) once to recover — the plugin deliberately registers nothing at the system level (see "Manual Recovery After Reboot" below).
+   * **Host hook auto-takeover**: SessionStart hook self-starts the proxy; UserPromptSubmit hook self-checks and revives it on every new message; SessionEnd hook batch-restores at session end (effective on hosts that support plugin hooks).
+   * **Manual recovery after reboot (host-hook independent, no system-level registration)**: Windows shutdown/restart kills the daemon outright and bypasses every hook, leaving the hooked body pointing at a dead proxy port in an "orphan" state. But **all other providers and the direct copy always stay connected directly**, so you can still send messages and run recovery commands — no more "everything points at a dead port, can't even send `on`" deadlock. Recovery: switch to the direct copy (or any non-hooked provider) in cc-haha, then run `/we-need-ds:on` (or `node lib/ctl.js boot` in a terminal) — revive daemon + fix orphans + re-hook from the ledger. The plugin registers no scheduled tasks and writes nothing to the Startup folder; uninstalling leaves nothing behind (see "Manual Recovery After Reboot" below).
    * **Always-on daemon**: stays resident by default (`idleAutoShutdownMinutes: 0`).
    * **100% Zero-Touch for Non-Target Models**: Claude, GPT, Gemini, Qwen models pass through with pure byte-level streaming.
 
@@ -84,18 +86,25 @@ sequenceDiagram
 
 ## 🚀 Getting Started
 
-### 🅰️ Using with [cc-haha](https://github.com/NanmiCoder/cc-haha) (Zero Config)
+### 🅰️ Using with [cc-haha](https://github.com/NanmiCoder/cc-haha)
 
-1. **Zero configuration required**: Keep your provider `baseUrl` pointing to your normal 9router / API port (e.g., `http://localhost:20128`).
-2. **Multi-window flexibility**: The plugin manages all providers concurrently.
-3. **Usage**:
-   ```bash
-   /we-need-ds Build a complete unit test suite for the payment service
-   ```
-   Or for pure architecture planning without modifying code:
-   ```bash
-   /we-need-ds:plan Plan large scale refactoring
-   ```
+1. **Set the provider you're actually using as the default first**:
+   * cc-haha's sidecar strips the path prefix when forwarding, so the proxy can only identify the source by API Key and cannot tell from the request "which provider you just switched to". The plugin therefore uses `activeId` (the default provider) as the takeover marker. **Before enabling, set the DeepSeek Pro provider you're really using as the default in cc-haha**, and the plugin will hook it.
+   * Every other provider's `baseUrl` stays untouched, pointing at its own real upstream — this is exactly the deadlock-prevention key: if the daemon ever dies, you still have plenty of direct entry points plus the auto-generated direct copy to switch to.
+2. **Enable = hook the default + create the copy**:
+   * Run `/we-need-ds:on` (or `node lib/ctl.js on` in a terminal): revives the daemon, switches the default DS provider's `baseUrl` to the proxy port, and clones a `· direct copy` (pointing at the original real upstream) as the escape hatch.
+   * Switch the default provider and run `on` again: the old body is auto-restored to direct, the new default gets hooked, and only one copy is ever kept.
+3. **Run `off` before quitting (recommended habit)**:
+   * Before closing cc-haha / shutting down, run `/we-need-ds:off` to restore the body to direct and remove the copy — clean ledger. Even if you forget, after a reboot you can still send messages via the copy or any non-hooked provider and run `boot`/`on` to recover; nothing gets stuck.
+4. **Daily usage**:
+   * Type directly in the chat box:
+     ```bash
+     /we-need-ds Refactor the user auth module and write test cases
+     ```
+   * When you want deep reasoning first without writing code:
+     ```bash
+     /we-need-ds:plan Plan a large-scale system refactoring
+     ```
 
 ---
 
@@ -116,25 +125,27 @@ sequenceDiagram
 | :--- | :--- | :--- |
 | **`/we-need-ds <task>`** | **Execute with full-power reasoning** | Primary entry point: enables interception and runs task |
 | **`/we-need-ds:plan <task>`** | **Read-only planning agent** | Summons `we-need-planner` to generate Markdown blueprint |
-| **`/we-need-ds:doctor`** | **Health diagnostic** | Inspects proxy port, environment mode, 25-provider pool status |
+| **`/we-need-ds:doctor`** | **Health diagnostic** | Inspects proxy port, environment mode, provider pool takeover and connectivity status |
 | **`/we-need-ds:test`** | **Run test simulation suite** | Assertions covering decision-turn minimal mode, execution-turn passthrough, non-target passthrough, M1/M3 edge cases, and the non-DS safety baseline |
 | **`/we-need-ds:status`** | **Inspect runtime status** | Shows daemon state, interception switch, hooked providers, and logs |
-| **`/we-need-ds:on`** | **Enable interception** | Hooks all providers; decision turns enter minimal simulation by default |
-| **`/we-need-ds:off`** | **Force disable & restore** | Restores all providers to their original upstream URLs |
+| **`/we-need-ds:on`** | **Enable interception** | Hooks the current default DS provider and creates the direct copy; decision turns enter minimal simulation by default |
+| **`/we-need-ds:off`** | **Force disable & restore** | Restores the hooked body to its real upstream and removes the direct copy |
 | **`/we-need-ds:restart`** | **Gracefully restart the daemon** | When the proxy is wedged (e.g. full of stalled upstream requests) or after a code update: kills the old process → spawns a fresh daemon → re-hooks providers from the ledger |
 
 ---
 
 ## 🔌 Manual Recovery After Reboot (no system-level registration)
 
-Windows shutdown/restart **kills the daemon outright** and bypasses every session hook — providers.json is left pointing at a dead proxy port. This plugin **deliberately performs no system-level persistence** (no scheduled tasks, no Startup-folder entries): a plugin should be a plugin — it doesn't silently modify your system, and uninstalling leaves nothing behind.
+Windows shutdown/restart **kills the daemon outright** and bypasses every session hook — the hooked body is left in an "orphan" state pointing at a dead proxy port. This plugin **deliberately performs no system-level persistence** (no scheduled tasks, no Startup-folder entries): a plugin should be a plugin — it doesn't silently modify your system, and uninstalling leaves nothing behind.
 
-So **after a reboot, or after fully restarting cc-haha / Claude Code**, start interception once explicitly (same as invoking any skill):
+**Since v2.2.0 the deadlock is eradicated**: the proxy hooks only the single current default provider, while all other providers and the auto-generated `· direct copy` always stay connected directly. So even after a reboot with the daemon dead, you can still send messages normally (via any non-hooked provider or the copy) and recovery commands still get through — no more "everything points at a dead port, can't even send `on`" deadlock.
+
+Therefore **after a reboot, or after fully restarting cc-haha / Claude Code**, start interception once explicitly (same as invoking any skill):
 
 - Run `/we-need-ds:on` in Claude Code — revives the daemon + restores orphans + re-hooks from the ledger, in one step;
 - Or run `node "<CACHE>\lib\ctl.js" boot` in a terminal — the host-hook-independent equivalent, self-healing per the ledger's `enabled` flag (enabled → revive daemon + restore orphans + re-hook; disabled → clean up strays).
 
-In-session self-healing (the UserPromptSubmit hook: every new message checks the daemon and revives + re-hooks if it's dead) still works on hosts that support plugin hooks, and doesn't conflict with the manual start above.
+In-session self-healing (the UserPromptSubmit hook: every new message checks the daemon and revives + re-hooks if it's dead) still works on hosts that support plugin hooks (e.g. native Claude Code), and doesn't conflict with the manual start above. cc-haha's sidecar runs as a persistent server and does not execute plugin hooks, so under cc-haha rely on the manual `on`/`boot`.
 
 **Fail-safe restore (no deadlock)**: every recovery path (`on` / `boot` / hooks) that fails to bring the daemon up **automatically restores any provider still pointing at the proxy port back to its real upstream** — never leaving a deadlocked state where endpoints point at a dead proxy, the app is unusable, and even the recovery command can't get through. The restore is **not one-way**: on the very next message, if the ledger says `enabled`, the daemon is alive, and zero providers are hooked, the UserPromptSubmit hook re-hooks automatically — so the first turn after recovery is proxied and trimmed again. `status` / `doctor` print a prominent warning (plus the recovery command) when providers point at the proxy port but the daemon is down.
 
@@ -175,7 +186,7 @@ In-session self-healing (the UserPromptSubmit hook: every new message checks the
 | `targetModels` | DS V4 family | Models that trigger interception (normalization engine matches underscores/spaces/hyphens/path prefixes/case variants). **Every model outside this list (Claude / GPT / Gemini / Qwen, …) is passed through byte-for-byte, never modified.** |
 | `bootstrapCoreTools` | `["Bash","Edit"]` | Minimal tool set kept on decision turns (mirrors DSH's bash + str_replace_editor pair). Tools already invoked in conversation history are also auto-kept to avoid protocol validation errors. |
 | `logDetails` | `false` | When `true`, logs every passthrough request's URL and upstream (for routing debugging). |
-| `idleAutoShutdownMinutes` | `0` | Idle auto-release switch. Default `0` = daemon stays resident; set to N to auto-restore all providers and exit after N idle minutes — the UserPromptSubmit hook revives it on your next message. |
+| `idleAutoShutdownMinutes` | `0` | Idle auto-release switch. Default `0` = daemon stays resident; set to N to auto-restore the hooked provider(s) to direct and exit after N idle minutes — the UserPromptSubmit hook revives it on your next message. |
 | `executionDshPersona` | `true` | Whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns). |
 | `thinkingBudget` | `0` | Optional Anthropic extended-thinking budget on decision turns. Default `0` = off (no thinking field injected; relies on the model's native chain). A positive N injects `thinking: {type:"enabled", budget_tokens:N}` as an optional reinforcement for deep reasoning. |
 | `stripSystemPersona` | *(absent = on)* | Master persona-replacement switch. By default every DS-target request gets the DSH one-liner persona; set to `false` to disable persona replacement entirely (tool trimming still applies). |
@@ -190,7 +201,7 @@ In-session self-healing (the UserPromptSubmit hook: every new message checks the
 ## ⚠️ Boundaries & Notes
 
 1. **Ledger trust chain**: when the plugin rewrites a provider's `baseUrl` to the proxy address, it records the baseUrl *at the moment of rewriting* as the real upstream (`originalUrl`). So **make sure every provider's baseUrl in cc-haha points to a real upstream** (official endpoint or your own relay, e.g. 9router on `:20128`). If you manually configure a provider to point at *another proxy*, the plugin will record that proxy address as the real upstream and restore to it — this is a design boundary, not a bug. Run `/we-need-ds:doctor` before enabling interception to verify each provider's original upstream.
-2. **Two version lines**: **v5 / v5.1** throughout the docs refers to the **mechanism version** (the turn-aware DSH minimal simulation algorithm's evolution codename); the plugin itself follows **semver** (see `plugin.json` and CHANGELOG, currently `2.1.x`). They are numbered independently: mechanism v5.1 corresponds to plugin 2.1.x. GitHub Releases use semver.
+2. **Two version lines**: **v5 / v5.1** throughout the docs refers to the **mechanism version** (the turn-aware DSH minimal simulation algorithm's evolution codename); the plugin itself follows **semver** (see `plugin.json` and CHANGELOG, currently `2.2.x`). They are numbered independently: mechanism v5.1 ships in the plugin 2.x series. GitHub Releases use semver.
 3. **Port occupancy**: the proxy binds `127.0.0.1:20329` by default. If occupied, change `port` in `config.json`; on a port change the plugin first restores providers pointing at the old port, then re-hooks them on the new port — the proxy address is never recorded as a real upstream.
 4. **Test isolation (read before running the suites)**: the self-test suites rewrite providers.json and runtime-state.json. To avoid polluting your live environment, set three isolation env vars so tests read/write a temp dir and never touch production files: `WE_NEED_DS_TEST_PORT` (test port), `WE_NEED_DS_PROVIDERS_PATH` (temp providers.json path), `WE_NEED_DS_DATA_DIR` (temp data dir). `test_full.js` / `test_consume.js` have this isolation built in (via `os.tmpdir()`), so `node test_full.js` is safe as-is; when manually running takeover commands like `ctl on/off` without touching production, set the same three vars.
 

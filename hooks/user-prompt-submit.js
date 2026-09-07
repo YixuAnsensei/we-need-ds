@@ -22,9 +22,9 @@ async function main() {
 
     if (up) {
       const r = state.recoverOrphans(config);
-      state.enableInterception(config);
-      state.log(`user-prompt-submit: daemon revived and re-hooked (${r.restoredList ? r.restoredList.length : 0} orphans restored first)`);
-      console.log('[we-need-ds] 检测到代理已失效，已自动拉起并重新接管（裁剪恢复生效）');
+      const re = state.enableInterception(config);
+      state.log(`user-prompt-submit: daemon revived and re-hooked (${r.restoredList ? r.restoredList.length : 0} orphans restored first; active=${re.activeHooked || 'none'})`);
+      console.log('[we-need-ds] 检测到代理已失效，已自动拉起并重新接管当前默认 provider（裁剪恢复生效）');
     } else {
       state.log('user-prompt-submit: daemon failed to revive');
       const ds = state.detectDeadState(config);

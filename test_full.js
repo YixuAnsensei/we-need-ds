@@ -9,6 +9,7 @@ fs.mkdirSync(path.join(ISOL_DIR, 'cc-haha'), { recursive: true });
 fs.mkdirSync(path.join(ISOL_DIR, 'we-need-ds'), { recursive: true });
 process.env.WE_NEED_DS_PROVIDERS_PATH = path.join(ISOL_DIR, 'cc-haha', 'providers.json');
 process.env.WE_NEED_DS_DATA_DIR = path.join(ISOL_DIR, 'we-need-ds');
+process.env.WE_NEED_DS_TEST_PORT = '21329';
 
 const state = require('./lib/state.js');
 
@@ -560,6 +561,59 @@ async function main() {
       runHook();
       check('I4 daemon起不来(端口被占)→钩子还原直连(不留死状态)', provBase() === 'http://127.0.0.1:2099');
       blocker.close();
+
+      console.log('===== Phase J: 单服务商接管 + 直连副本逃生口 =====');
+      const cfgJ = state.loadConfig(); cfgJ.port = 21329;
+      const provJ = () => JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+      const mkProvJ = () => ({
+        activeId: 'j-ds',
+        providers: [
+          { id: 'j-ds', name: 'J-DS', baseUrl: 'http://127.0.0.1:2099', apiKey: 'sk-j-ds', models: { m1: 'deepseek-v4-pro' } },
+          { id: 'j-other', name: 'J-Other', baseUrl: 'http://127.0.0.1:2100', apiKey: 'sk-j-other', models: { m1: 'gpt-5' } }
+        ]
+      });
+
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify(mkProvJ(), null, 2));
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+      const rJ = state.enableInterception(cfgJ);
+      let pj = provJ();
+      const jDs = pj.providers.find(p => p.id === 'j-ds');
+      const jOther = pj.providers.find(p => p.id === 'j-other');
+      const jCopy = pj.providers.find(p => p.id === 'wnd-copy-j-ds');
+      check('J1 只接管 activeId 的 DS provider → 代理', jDs.baseUrl.includes('21329'));
+      check('J2 非 activeId 的 provider 保持直连不被改', jOther.baseUrl === 'http://127.0.0.1:2100');
+      check('J3 创建直连副本: baseUrl=原始真实url 且带副本标记', jCopy && jCopy.baseUrl === 'http://127.0.0.1:2099' && jCopy.weNeedDsCopy === true && jCopy.name.endsWith('直连副本'));
+      check('J4 账本只记被接管 provider (剪枝旧全量)', Object.keys(state.readState().providers).length === 1 && !!state.readState().providers['j-ds']);
+      check('J5 interceptedList 报告 activeHooked 与副本名', rJ.activeHooked === 'J-DS' && rJ.copyName && rJ.copyName.includes('J-DS'));
+
+      state.enableInterception(cfgJ);
+      pj = provJ();
+      const copyCount = pj.providers.filter(p => p.weNeedDsCopy).length;
+      check('J6 重复 on 幂等: 不产生多个副本, 本体仍代理', copyCount === 1 && pj.providers.find(p => p.id === 'j-ds').baseUrl.includes('21329'));
+
+      state.disableInterception(cfgJ);
+      pj = provJ();
+      check('J7 off 后本体还原直连', pj.providers.find(p => p.id === 'j-ds').baseUrl === 'http://127.0.0.1:2099');
+      check('J8 off 后副本被清除', !pj.providers.some(p => p.weNeedDsCopy));
+
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify(mkProvJ(), null, 2));
+      state.enableInterception(cfgJ);
+      state.writeState({ enabled: true, proxyUrl: 'http://127.0.0.1:21329', providers: {}, keyMap: {}, defaultUpstream: null });
+      const rJ2 = state.disableInterception(cfgJ);
+      pj = provJ();
+      check('J9 账本丢失时副本充当冗余账本: 本体从副本 baseUrl 救回真实上游', pj.providers.find(p => p.id === 'j-ds').baseUrl === 'http://127.0.0.1:2099' && rJ2.restoredList.length === 1);
+
+      fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({
+        activeId: 'j-other',
+        providers: [
+          { id: 'j-ds', name: 'J-DS', baseUrl: 'http://127.0.0.1:2099', apiKey: 'sk-j-ds', models: { m1: 'deepseek-v4-pro' } },
+          { id: 'j-other', name: 'J-Other', baseUrl: 'http://127.0.0.1:2100', apiKey: 'sk-j-other', models: { m1: 'gpt-5' } }
+        ]
+      }, null, 2));
+      state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+      const rJ3 = state.enableInterception(cfgJ);
+      pj = provJ();
+      check('J10 activeId 是非 DS provider → 不接管不建副本 (全直连)', pj.providers.find(p => p.id === 'j-other').baseUrl === 'http://127.0.0.1:2100' && !pj.providers.some(p => p.weNeedDsCopy) && rJ3.activeHooked === null);
     } finally {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}

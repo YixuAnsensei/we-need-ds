@@ -64,7 +64,11 @@ async function main() {
     };
   }
   if (result.ok) {
-    console.log(`[we-need-ds] 拦截已开启：baseUrl 临时切至 :${config.port}（会话结束自动还原）`);
+    if (result.activeHooked) {
+      console.log(`[we-need-ds] 拦截已开启：仅接管默认 provider「${result.activeHooked}」→ :${config.port}，并留直连副本作逃生口（会话结束自动还原）`);
+    } else {
+      console.log(`[we-need-ds] 拦截已开启：${result.note || '当前默认 provider 非 DeepSeek Pro，未接管（保持直连）'}`);
+    }
   } else {
     const ds = state.detectDeadState(config);
     if (ds.dead) {
