@@ -3,6 +3,16 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.4.1 — 2026-09-07
+
+### Fixed (port-boundary precision + guard coverage)
+- **`isSelfProxyUrl` / `isProxiedUrl` substring false-match fixed.** Both used `url.includes(':<port>')`, so a real upstream on port `203290` was misjudged as "the proxy itself" (`:20329` is a substring of `:203290`) → rejected → 502. Same class as the already-fixed M5. Now matched with `:${port}(?![0-9])` so the port must be followed by a non-digit (slash, colon, or end). Fail-safe direction, but wrong behavior — fixed for correctness. Tests M1a–M1c, M2a–M2c.
+- **M4 malformed-path guard now has end-to-end coverage.** The `/^\/(?!\/)/` rejection of `//host` absolute-form paths existed in `proxy.js` since v2.4.0 but had no test; added a live-daemon test proving `//evil.example.com/v1/messages` → 400 while `/v1/messages` → 200 passthrough. Tests M4a/M4b.
+- **Test flakiness reduced.** Bumped the post-`killPort` settle wait from 300ms to 600ms in Phase L — a killed daemon occasionally hadn't fully released its port before the next spawn, causing a rare spurious `EADDRINUSE` failure (a known trap, not a logic bug).
+
+### Tests
+- New Phase M (test_full, +8): port-boundary precision for both URL predicates, malformed-path guard end-to-end. **135 assertions green.**
+
 ## v2.4.0 — 2026-09-07
 
 ### Fixed (deep audit + third-party retry comparison)

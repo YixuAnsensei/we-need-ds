@@ -721,7 +721,7 @@ async function main() {
     const enotBody = JSON.parse(enotRes.body);
     check('L5b ENOTFOUND 返回 anthropic 标准错误体', enotBody.type === 'error' && enotBody.error.type === 'api_error');
     killPort(L_PORT);
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 600));
 
     const lHits = [];
     const lMock = http.createServer((req, res) => {
@@ -749,7 +749,7 @@ async function main() {
     check('L6a 5xx 可重试: retries=1 → 上游收到2次', lHits.filter(u => u.includes('/fail')).length === 2);
     check('L6b 重试耗尽后透传上游500状态', lFailRes.status === 500);
     killPort(L_PORT);
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 600));
 
     const cfgL3 = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
     cfgL3.targetBaseUrl = `http://127.0.0.1:${L_MOCK}`;
@@ -771,7 +771,7 @@ async function main() {
     await new Promise(r => setTimeout(r, 1200));
     check('L7 客户端断开后不再重试上游(stall仅命中1次)', lHits.filter(u => u.includes('/stall')).length === 1);
     killPort(L_PORT);
-    await new Promise(r => setTimeout(r, 300));
+    await new Promise(r => setTimeout(r, 600));
 
     const cfgL4 = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
     cfgL4.targetBaseUrl = `http://127.0.0.1:${L_MOCK}`;
@@ -831,6 +831,44 @@ async function main() {
     const ssProv = JSON.parse(fs.readFileSync(path.join(ISOL_DIR, 'cc-haha', 'providers.json'), 'utf8'));
     check('L11 session-start 在 enabled=false 时不自动接管(尊重关闭意图)', ssProv.providers[0].baseUrl === 'https://api.deepseek.com/anthropic' && !ssProv.providers.some(p => p.baseUrl.includes(String(L_PORT))));
     killPort(L_PORT);
+
+    console.log('===== Phase M: 端口边界精确匹配 + 畸形路径守卫 (v2.4.1) =====');
+    check('M1a isSelfProxyUrl 精确端口命中', state.isSelfProxyUrl('http://127.0.0.1:20329', 20329) === true);
+    check('M1b isSelfProxyUrl 不误伤 :203290', state.isSelfProxyUrl('http://127.0.0.1:203290', 20329) === false);
+    check('M1c isSelfProxyUrl 端口后跟斜杠命中', state.isSelfProxyUrl('http://127.0.0.1:20329/v1', 20329) === true);
+    const portsM = new Set(['20329']);
+    check('M2a isProxiedUrl 精确端口命中', state.isProxiedUrl('http://127.0.0.1:20329', portsM) === true);
+    check('M2b isProxiedUrl 不误伤 :203290', state.isProxiedUrl('http://127.0.0.1:203290', portsM) === false);
+    check('M2c isProxiedUrl localhost 精确命中', state.isProxiedUrl('http://localhost:20329', portsM) === true);
+
+    const M_PORT = 21332;
+    const M_MOCK = 21903;
+    const mMock = http.createServer((req, res) => {
+      let data = '';
+      req.on('data', c => data += c);
+      req.on('end', () => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end('{"ok":true}'); });
+    });
+    await new Promise(r => mMock.listen(M_MOCK, '127.0.0.1', r));
+    const cfgM = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
+    cfgM.targetBaseUrl = `http://127.0.0.1:${M_MOCK}`;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgM, null, 2));
+    state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+    spawnDaemon({ WE_NEED_DS_TEST_PORT: String(M_PORT) });
+    for (let i = 0; i < 25; i++) { await new Promise(r => setTimeout(r, 200)); if (await state.isProxyRunning(M_PORT)) break; }
+    const mPost = (p) => new Promise((resolve) => {
+      const req = http.request({ hostname: '127.0.0.1', port: M_PORT, path: p, method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 8000 }, (res) => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', e => resolve({ status: 0, body: String(e.message) }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: 'timeout' }); });
+      req.end(JSON.stringify({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }));
+    });
+    const badPath = await mPost('//evil.example.com/v1/messages');
+    check('M4a 畸形路径 // 绝对形式被 400 拒绝', badPath.status === 400);
+    const goodPath = await mPost('/v1/messages');
+    check('M4b 正常单斜杠路径仍 200 透传', goodPath.status === 200);
+    killPort(M_PORT);
+    mMock.close();
 
     upstreamMain.close();
     upstreamSecond.close();

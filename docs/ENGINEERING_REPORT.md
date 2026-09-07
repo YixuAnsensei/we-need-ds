@@ -1,6 +1,6 @@
 # we-need-ds 插件工程开发报告
 
-> 文档版本：对应插件 semver `2.4.0` / 机制版本 `v5.1`
+> 文档版本：对应插件 semver `2.4.1` / 机制版本 `v5.1`
 > 撰写日期：2026-09-07
 > 文档性质：完整工程实现说明。面向接手/评审的工程师与智能体，实事求是描述"实现了什么、如何实现、为什么这样设计、遇到过什么问题、当前边界在哪"，不包含开发方向上的倾向性建议。
 
@@ -83,7 +83,7 @@ DeepSeek Harness（DSH）社区的观察与本项目实测共同确认：**DeepS
 | 宿主钩子 | `hooks/*.js` + `hooks/hooks.json` | SessionStart / UserPromptSubmit / SessionEnd 三钩子（仅支持 hooks 的宿主生效） |
 | 技能入口 | `skills/*/SKILL.md` | `/we-need-ds`、`:on`、`:off`、`:status`、`:doctor`、`:test`、`:restart` |
 | 子代理 | `agents/we-need-planner.md` | `/we-need-ds:plan` 只读深度规划器 |
-| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js` | 127 项断言自测试套件等 |
+| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js` | 135 项断言自测试套件等 |
 
 ### 2.3 数据文件布局
 
@@ -341,12 +341,13 @@ DS + 其他(末条非 user 的异常结构):
 | 14 | **ctx 遮蔽致断开取消失效** | `req.on('end')` 回调内 `const ctx = {}` 遮蔽了顶层含 `clientGone` 的 ctx，断开信号永远传不进重试循环 | v2.4.0 删除遮蔽声明，clientGone 正常传播（L7） |
 | 15 | **M2：`ds` 子串误伤** | 归一化后 `includes('ds')` 使 `models`/`adsl` 等误命中 DS 判定 | v2.4.0 收紧为独立词元（分隔符/边界界定）（L4a–L4e） |
 | 16 | **M1：钩子意图不一致** | SessionEnd 调 `disableInterception` 清掉 enabled，下个会话 SessionStart 又无条件 `on` 重开——用户显式 `off` 被静默撤销 | v2.4.0 SessionEnd 改 `recoverOrphans`（还原但保留意图）、SessionStart 仅在 enabled 时接管（L10/L11） |
+| 17 | **端口子串误匹配（M5 同类残留）** | `isSelfProxyUrl`/`isProxiedUrl` 用 `includes(':20329')`，会误命中端口 `:203290`（真实上游恰在该端口时被误判为代理→拒绝→502，fail-safe 但错误） | v2.4.1 改 `:${port}(?![0-9])` 精确边界（M1a-c/M2a-c）；同时补 M4 畸形路径守卫的端到端测试（此前守卫存在但无覆盖） |
 
 ---
 
 ## 7. 测试体系
 
-`test_full.js` 共 **127 项断言**，全程隔离（端口 21329/21330/21331、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
+`test_full.js` 共 **135 项断言**，全程隔离（端口 21329/21330/21331/21332、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
 
 | Phase | 覆盖 |
 | :--- | :--- |
@@ -362,6 +363,7 @@ DS + 其他(末条非 user 的异常结构):
 | J | **单服务商接管 + 直连副本十项**：只接管 activeId、非 active 不动、副本字段语义、账本剪枝、幂等不重复建副本、off 还原+清副本、账本丢失副本救援、非 DS active 不接管 |
 | K | **接管时可选 provider 八项**：listProviders 标注/排序、指定非默认 DS 接管、activeId 同步、其余直连、副本携带真实上游、按名称指定、非 DS/未知拒绝、拒绝零污染 |
 | L | **v2.4.0 修复回归二十八项**：退避指数/Retry-After clamp、重试分级（ENOTFOUND 不重试 / ECONNREFUSED 重试）、标准错误体（anthropic/openai）、M2 独立 ds 词元、5xx 重试计数、客户端断开取消重试、`/ctl on` providerId 端到端、H1 拒绝不破坏既有接管、session-end 保留意图、session-start 尊重 off |
+| M | **v2.4.1 端口边界与路径守卫八项**：isSelfProxyUrl/isProxiedUrl 精确端口匹配（`:20329` 不误伤 `:203290`）、畸形路径 `//` 绝对形式 400 拒绝、正常单斜杠路径仍透传 |
 
 另有 `test_consume.js`（消费方视角请求形态）与 `test_simulation.js`（早期模拟套件）。
 
@@ -410,7 +412,8 @@ DS + 其他(末条非 user 的异常结构):
 | **2.2.0** | v5.1 | **单服务商接管 + 直连副本逃生口**：根治重启死锁；两段式安全释放；账本剪枝与旧态自动迁移；hooks/ctl 输出与中英 README 同步 |
 | 2.2.1 | v5.1 | 统一 daemon 端口释放：`killDaemonOnPort` 杀进程后轮询确认端口真正释放，根治残留进程占端口导致的假接管 |
 | 2.3.0 | v5.1 | **接管时可选任意 provider**：`ctl list` 清单（🎯含DS/⭐默认/🔌代理中）+ `on --provider <id|名称>`；接管非默认 provider 自动同步 activeId（sidecar 按 activeId 路由）；拒绝路径零污染；中英 README 顶部显式告知"接管改写 providers.json 且关机后持久保留"根因与副本兜底 |
-| **2.4.0** | v5.1 | **深度审计 + 三方重试对照修复**：H1 无效 `--provider` 不再破坏既有接管（校验前置）；重试分级根治重试风暴（确定性错误快速失败、默认重试 2→1、客户端断开取消重试、Retry-After clamp 0–60s）；标准错误体（anthropic/openai 按路径）；M2 `ds` 子串误伤收紧为独立词元；M1 钩子意图一致（session-end 保留 enabled、session-start 尊重 off）；M3 keyMap 剪枝；M4 畸形路径 400；M5 端口精确匹配；L2 `env/default` 哨兵恢复；L3 `--provider` 缺值校验；测试 99→127 |
+| 2.4.0 | v5.1 | **深度审计 + 三方重试对照修复**：H1 无效 `--provider` 不再破坏既有接管（校验前置）；重试分级根治重试风暴（确定性错误快速失败、默认重试 2→1、客户端断开取消重试、Retry-After clamp 0–60s）；标准错误体（anthropic/openai 按路径）；M2 `ds` 子串误伤收紧为独立词元；M1 钩子意图一致（session-end 保留 enabled、session-start 尊重 off）；M3 keyMap 剪枝；M4 畸形路径 400；M5 端口精确匹配；L2 `env/default` 哨兵恢复；L3 `--provider` 缺值校验；测试 99→127 |
+| **2.4.1** | v5.1 | **端口边界精确化 + 守卫补测**：`isSelfProxyUrl`/`isProxiedUrl` 由子串匹配改 `:${port}(?![0-9])` 精确边界（根治 `:20329` 误伤 `:203290`，与 M5 同类）；补 M4 畸形路径守卫的端到端测试（守卫此前存在但无覆盖）；测试 127→135（新增 Phase M 八项） |
 
 > 两条编号线独立：文档中的 v5/v5.1 是**机制版本**（轮次感知 DSH 极简模拟算法的演进代号）；插件遵循 semver（`plugin.json`/CHANGELOG）。GitHub Releases 以 semver 为准。
 
@@ -420,7 +423,7 @@ DS + 其他(末条非 user 的异常结构):
 
 ```
 we-need-ds/
-├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.0/keywords)
+├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.1/keywords)
 ├── config.json                     # 运行时配置
 ├── proxy.js                        # 代理网关 (分级重试/断开取消/标准错误体/DSH 塑形)
 ├── lib/state.js                    # 状态机 (接管/两段式释放/副本/锁/原子写/迁移)
@@ -432,13 +435,13 @@ we-need-ds/
 ├── skills/{we-need-ds,on,off,status,doctor,test,restart}/SKILL.md
 ├── commands/{plan,run}.md          # 斜杠指令 (CC 轨)
 ├── agents/we-need-planner.md       # 只读深度规划子代理
-├── test_full.js                    # 127 断言主套件 (Phase A-L)
+├── test_full.js                    # 135 断言主套件 (Phase A-M)
 ├── test_consume.js                 # 消费方视角测试
 ├── test_simulation.js              # 早期模拟测试
-├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.0)
+├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.1)
 ├── CHANGELOG.md                    # 版本日志
 ├── LICENSE                         # MIT
 └── docs/alipay_qr.jpeg             # README 赞助二维码
 ```
 
-**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.0）。
+**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.1）。
