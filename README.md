@@ -115,6 +115,7 @@ sequenceDiagram
 
 1. **先把正在用的服务商设为默认**：
    * cc-haha 的 sidecar 转发时会剥掉路径前缀，代理只能靠 API Key 识别来源、无法从请求知道"你当下切到了哪个 provider"，因此插件以 `activeId`（默认服务商）作为接管标记。**开启前请在 cc-haha 里把你当前真正要用的那个 DeepSeek Pro 服务商设为默认**，插件才会接管它。
+   * **接管与否只看该 provider 声明的 `models` 字段**：插件读取 `providers.json` 里这个服务商的 `models`（main/haiku/sonnet/opus 等映射），只要其中任一模型名命中 DeepSeek Pro 判定（在 `targetModels` 列表内，或归一化后含 `deepseek|ds` 且含 `v4|pro|flash`）才接管。像 9Router 这类中转站，即使它**实际能转发** DeepSeek 模型，只要它的 `models` 字段里没写 deepseek 系模型名，插件就判定它"非 DS provider"而**不接管**（保持直连、不裁剪）。所以请确保你设为默认的那个服务商，其 `models` 里确实声明了 DeepSeek Pro 模型——正常使用前你本来就会先切到 DeepSeek 模型，这一步天然满足。
    * 其余服务商的 `baseUrl` 一律不动，保持各自真实上游——这正是防死锁的关键：daemon 万一死了，你还有大量直连入口和自动生成的直连副本可切换。
 2. **开启即接管默认 + 建副本**：
    * 执行 `/we-need-ds:on`（或终端 `node lib/ctl.js on`）：拉起 daemon、把默认 DS 服务商的 `baseUrl` 切到代理端口、并复制一份 `· 直连副本`（指向原始真实上游）作为逃生口。

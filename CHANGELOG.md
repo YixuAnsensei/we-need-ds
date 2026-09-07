@@ -3,6 +3,17 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.2.1 — 2026-09-07
+
+### Fixed (reliable daemon port release)
+- **`restart` and `boot` now share one robust port-release helper.** Both previously inlined their own `netstat | findstr | taskkill` snippets, and neither *waited* for the port to actually free before relaunching — a crashed/killed leftover daemon squatting the port could make the new daemon exit on `EADDRINUSE`, and a subsequent `/ctl on` would then silently talk to the zombie (observed as a confusing "activeId is X but takeover says Y" mismatch during an end-to-end simulation). New `state.killDaemonOnPort(port)` finds the PID, `taskkill`s it, then polls `/health-check` until the port is confirmed free (up to 5s), returning `{killed, pid, released}`; it is idempotent (a free port is a no-op). `restart` and `boot` both call it, and `restart` now warns if release times out instead of proceeding blindly.
+
+### Docs
+- README (zh + en): clarified that **takeover is decided solely by the `models` field the default provider *declares*** — a relay like 9Router that can actually forward DeepSeek but doesn't list a deepseek model name in its `models` is treated as non-DS and left direct (no trimming). In normal use you switch to a DeepSeek model first anyway, so this is naturally satisfied.
+
+### Tests
+- All 90 assertions green (test_full). New helper verified in an isolated sandbox: killing a live daemon reports `released:true` with the port confirmed free; calling it on a free port is a safe no-op.
+
 ## v2.2.0 — 2026-09-07
 
 ### Changed (root-cause fix: single-provider takeover + direct-copy escape hatch)
