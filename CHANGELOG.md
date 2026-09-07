@@ -3,6 +3,15 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.4.2 — 2026-09-08
+
+### Added (concurrency & extreme-scenario stress regression)
+- **New `test_stress.js` — 25 assertions covering process-level concurrency and hostile state mutation that the main suite (single-process, sequential) does not reach.** Scenarios: 20-way concurrent forwarding under takeover (no cross-talk, no packet loss/duplication at the upstream), 10-round on/off flapping (every round converges to a consistent state, zero copy leaks), 8 concurrent `ctl` processes racing on/off (file-lock + atomic-write keep `providers.json` valid with no stray `.tmp`), an in-flight slow request vs a concurrent `off` (neither blocks the other), user hand-editing `providers.json` mid-takeover (deleting the hooked provider / switching `activeId`) then `off` (no crash, ledger retains the deleted provider's original upstream, surviving providers untouched), daemon killed mid-session → dead-state detection → `boot` recovery re-takeover, concurrent takeover switching A→B→A (exactly one copy, single-provider invariant holds), and 30 interleaved health/forward/ctl requests. All green across repeated runs.
+- **Production end-to-end re-verified** with a fresh `off → on` cycle against the real DeepSeek upstream: `off` restored the provider to direct and removed the copy; `on` re-hooked it and created the escape copy; a real request through `:20329` returned HTTP 200, the proxy logged `decision turn DSH-minimal`, input tokens were trimmed (full 7-tool payload → DSH minimal set), the **"We need" reasoning chain fired**, and every tool the model requested fell within the trimmed `{Bash, Edit}` set — proving the trimming is real and the model acts inside the minimal environment.
+
+### Docs
+- Engineering report: registered `test_stress.js` in the component table, test-system section, and file tree.
+
 ## v2.4.1 — 2026-09-07
 
 ### Fixed (port-boundary precision + guard coverage)

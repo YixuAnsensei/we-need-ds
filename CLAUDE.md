@@ -29,6 +29,7 @@ Claude Code / cc-haha 双宿主插件：在 DeepSeek-V4-Pro 系模型上动态�
 ```bash
 node test_full.js          # 主测试套件，隔离运行 (tmp 目录 + 端口 21329)，须全绿
 node test_consume.js       # 消费方视角请求形态测试
+node test_stress.js        # 并发/极端场景压力审查 (隔离端口 21340/21341/21342)
 node lib/ctl.js on|off|status|doctor|boot|restart
 ```
 
