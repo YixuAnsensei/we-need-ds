@@ -36,6 +36,7 @@ function makeUpstream(port, tag) {
       req.on('end', () => {
         hits.push({ tag, url: req.url, method: req.method, host: req.headers.host, contentLength: req.headers['content-length'], raw: data });
         if (req.url.includes('/fail')) { res.writeHead(500); res.end('{}'); return; }
+        if (req.url.includes('/stall')) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.flushHeaders(); return; }
         if (req.url.includes('/stream')) {
           res.writeHead(200, { 'Content-Type': 'text/event-stream' });
           res.write('event: message_start\n\n');
@@ -95,8 +96,11 @@ async function waitProxy() {
   return false;
 }
 function killDaemon() {
+  killPort(21329);
+}
+function killPort(port) {
   try {
-    const out = execSync('powershell -Command "(Get-NetTCPConnection -LocalPort 21329 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"').toString().trim();
+    const out = execSync(`powershell -Command "(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1).OwningProcess"`).toString().trim();
     if (/^\d+$/.test(out)) { try { execSync(`taskkill /F /PID ${out}`); } catch (e) {} }
   } catch (e) {}
 }
@@ -657,6 +661,176 @@ async function main() {
       if (hadProvF) fs.copyFileSync(provBakF, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
       try { fs.unlinkSync(provBakF); } catch (e) {}
     }
+
+    console.log('===== Phase L: 重试分级/断开取消/标准错误体/M2收紧/意图一致 (v2.4.0) =====');
+    const proxy = require('./proxy.js');
+    const L_PORT = 21331;
+    const L_MOCK = 21902;
+
+    const b1 = proxy.computeBackoffMs(500, 1, null);
+    const b2 = proxy.computeBackoffMs(500, 2, null);
+    const b3 = proxy.computeBackoffMs(500, 3, null);
+    const bClampHi = proxy.computeBackoffMs(100, 1, '999');
+    const bClampLo = proxy.computeBackoffMs(100, 1, '-5');
+    const bExpCap = proxy.computeBackoffMs(50000, 5, null);
+    check('L1a computeBackoffMs 指数增长', b1 === 500 && b2 === 1000 && b3 === 2000);
+    check('L1b Retry-After 上限 clamp 60s', bClampHi === 60000);
+    check('L1c Retry-After 负值 clamp 0', bClampLo === 100);
+    check('L1d 指数退避总封顶 60s', bExpCap === 60000);
+
+    check('L2a ENOTFOUND 不可重试', proxy.isRetryableNetError({ code: 'ENOTFOUND' }) === false);
+    check('L2b EAI_AGAIN 不可重试', proxy.isRetryableNetError({ code: 'EAI_AGAIN' }) === false);
+    check('L2c ECONNREFUSED 仍可重试(本地中继重启窗口)', proxy.isRetryableNetError({ code: 'ECONNREFUSED' }) === true);
+    check('L2d ECONNRESET 仍可重试', proxy.isRetryableNetError({ code: 'ECONNRESET' }) === true);
+
+    const ebAnth = JSON.parse(proxy.buildErrorBody('/v1/messages', 502, 'boom'));
+    const ebOpen = JSON.parse(proxy.buildErrorBody('/v1/chat/completions', 502, 'boom'));
+    check('L3a anthropic 路径标准错误体', ebAnth.type === 'error' && ebAnth.error.type === 'api_error' && ebAnth.error.message === 'boom');
+    check('L3b openai 路径标准错误体', ebOpen.error.message === 'boom' && ebOpen.error.type === 'api_error' && ebOpen.error.code === null);
+
+    check('L4a M2: deepseek-v4-pro 命中', proxy.isDeepSeekProModel('deepseek-v4-pro') === true);
+    check('L4b M2: ds-v4-pro 独立token命中', proxy.isDeepSeekProModel('ds-v4-pro') === true);
+    check('L4c M2: 子串ds误伤已修(models-gpt不含DS特征)', proxy.isDeepSeekProModel('gpt-5-models') === false);
+    check('L4d M2: adsl-v4-pro 不误命中', proxy.isDeepSeekProModel('adsl-v4-pro') === false);
+    check('L4e M2: claude 不命中', proxy.isDeepSeekProModel('claude-opus-4-8') === false);
+
+    const cfgL = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
+    cfgL.targetBaseUrl = 'http://we-need-ds-nonexistent.invalid';
+    cfgL.upstreamRetries = 2;
+    cfgL.upstreamRetryBackoffMs = 2000;
+    cfgL.upstreamHeaderTimeoutMs = 5000;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgL, null, 2));
+    state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+    const spawnedL = spawnDaemon({ WE_NEED_DS_TEST_PORT: String(L_PORT) });
+    let lUp = false;
+    for (let i = 0; i < 25; i++) { await new Promise(r => setTimeout(r, 200)); if (await state.isProxyRunning(L_PORT)) { lUp = true; break; } }
+    check('L0 daemon 拉起', lUp);
+    const lPost = (p, body, hdrs) => new Promise((resolve) => {
+      const t0 = Date.now();
+      const req = http.request({ hostname: '127.0.0.1', port: L_PORT, path: p, method: 'POST', headers: { 'content-type': 'application/json', ...(hdrs || {}) }, timeout: 15000 }, (res) => {
+        let d = '';
+        res.on('data', c => d += c);
+        res.on('end', () => resolve({ status: res.statusCode, body: d, ms: Date.now() - t0 }));
+      });
+      req.on('error', e => resolve({ status: 0, body: String(e.message), ms: Date.now() - t0 }));
+      req.on('timeout', () => { req.destroy(); resolve({ status: 0, body: 'client-timeout', ms: Date.now() - t0 }); });
+      req.end(body);
+    });
+    const enotRes = await lPost('/v1/messages', JSON.stringify({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }));
+    check('L5 ENOTFOUND 确定性失败不重试(快速502)', enotRes.status === 502 && enotRes.ms < 1500);
+    const enotBody = JSON.parse(enotRes.body);
+    check('L5b ENOTFOUND 返回 anthropic 标准错误体', enotBody.type === 'error' && enotBody.error.type === 'api_error');
+    killPort(L_PORT);
+    await new Promise(r => setTimeout(r, 300));
+
+    const lHits = [];
+    const lMock = http.createServer((req, res) => {
+      let data = '';
+      req.on('data', c => data += c);
+      req.on('end', () => {
+        lHits.push(req.url);
+        if (req.url.includes('/fail')) { res.writeHead(500); res.end('{}'); return; }
+        if (req.url.includes('/stall')) { res.writeHead(200, { 'Content-Type': 'application/json' }); res.flushHeaders(); return; }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"ok":true}');
+      });
+    });
+    await new Promise(r => lMock.listen(L_MOCK, '127.0.0.1', r));
+
+    const cfgL2 = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
+    cfgL2.targetBaseUrl = `http://127.0.0.1:${L_MOCK}`;
+    cfgL2.upstreamRetries = 1;
+    cfgL2.upstreamRetryBackoffMs = 100;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgL2, null, 2));
+    spawnDaemon({ WE_NEED_DS_TEST_PORT: String(L_PORT) });
+    for (let i = 0; i < 25; i++) { await new Promise(r => setTimeout(r, 200)); if (await state.isProxyRunning(L_PORT)) break; }
+    lHits.length = 0;
+    const lFailRes = await lPost('/v1/messages/fail', JSON.stringify({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }));
+    check('L6a 5xx 可重试: retries=1 → 上游收到2次', lHits.filter(u => u.includes('/fail')).length === 2);
+    check('L6b 重试耗尽后透传上游500状态', lFailRes.status === 500);
+    killPort(L_PORT);
+    await new Promise(r => setTimeout(r, 300));
+
+    const cfgL3 = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
+    cfgL3.targetBaseUrl = `http://127.0.0.1:${L_MOCK}`;
+    cfgL3.upstreamRetries = 2;
+    cfgL3.upstreamRetryBackoffMs = 300;
+    cfgL3.upstreamBodyTimeoutMs = 400;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgL3, null, 2));
+    spawnDaemon({ WE_NEED_DS_TEST_PORT: String(L_PORT) });
+    for (let i = 0; i < 25; i++) { await new Promise(r => setTimeout(r, 200)); if (await state.isProxyRunning(L_PORT)) break; }
+    lHits.length = 0;
+    await new Promise((resolve) => {
+      const req = http.request({ hostname: '127.0.0.1', port: L_PORT, path: '/v1/messages/stall', method: 'POST', headers: { 'content-type': 'application/json' } }, (res) => {
+        res.on('data', () => {});
+      });
+      req.on('error', () => {});
+      req.end(JSON.stringify({ model: 'x', messages: [{ role: 'user', content: 'hi' }] }));
+      setTimeout(() => { req.destroy(); resolve(); }, 100);
+    });
+    await new Promise(r => setTimeout(r, 1200));
+    check('L7 客户端断开后不再重试上游(stall仅命中1次)', lHits.filter(u => u.includes('/stall')).length === 1);
+    killPort(L_PORT);
+    await new Promise(r => setTimeout(r, 300));
+
+    const cfgL4 = JSON.parse(fs.readFileSync(CONFIG_BAK, 'utf8'));
+    cfgL4.targetBaseUrl = `http://127.0.0.1:${L_MOCK}`;
+    fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfgL4, null, 2));
+    const provBakL = state.PROVIDERS_PATH + '.phaseL-bak';
+    const hadProvL = fs.existsSync(state.PROVIDERS_PATH);
+    if (hadProvL) fs.copyFileSync(state.PROVIDERS_PATH, provBakL);
+    fs.writeFileSync(state.PROVIDERS_PATH, JSON.stringify({
+      activeId: 'l-other',
+      providers: [
+        { id: 'l-ds', name: 'L-DS', baseUrl: 'http://127.0.0.1:2099', apiKey: 'sk-l-ds', models: { a: 'deepseek-v4-pro' } },
+        { id: 'l-other', name: 'L-Other', baseUrl: 'http://127.0.0.1:2100', apiKey: 'sk-l-o', models: { a: 'gpt-5' } }
+      ]
+    }, null, 2));
+    state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+    spawnDaemon({ WE_NEED_DS_TEST_PORT: String(L_PORT) });
+    for (let i = 0; i < 25; i++) { await new Promise(r => setTimeout(r, 200)); if (await state.isProxyRunning(L_PORT)) break; }
+    const ctlOn = (payload) => new Promise((resolve) => {
+      const req = http.request({ hostname: '127.0.0.1', port: L_PORT, path: '/ctl', method: 'POST', headers: { 'content-type': 'application/json' }, timeout: 5000 }, (res) => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => { try { resolve(JSON.parse(d)); } catch (e) { resolve({ parseErr: d }); } });
+      });
+      req.on('error', e => resolve({ netErr: String(e.message) }));
+      req.end(JSON.stringify(payload));
+    });
+    const rCtlOn = await ctlOn({ action: 'on', providerId: 'l-ds' });
+    const pjL = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+    check('L8a /ctl on 携带 providerId 端到端接管', rCtlOn.ok === true && pjL.providers.find(p => p.id === 'l-ds').baseUrl.includes(String(L_PORT)));
+    check('L8b /ctl on providerId 同步 activeId', pjL.activeId === 'l-ds');
+    const rCtlBad = await ctlOn({ action: 'on', providerId: 'bogus-nope' });
+    const pjL2 = JSON.parse(fs.readFileSync(state.PROVIDERS_PATH, 'utf8'));
+    check('L9a H1回归: 无效providerId被拒绝', rCtlBad.ok === false && !!rCtlBad.reason);
+    check('L9b H1回归: 拒绝路径不破坏既有接管(本体仍代理+副本仍在)', pjL2.providers.find(p => p.id === 'l-ds').baseUrl.includes(String(L_PORT)) && pjL2.providers.some(p => p.id === 'wnd-copy-l-ds'));
+    await ctlOn({ action: 'off' });
+    killPort(L_PORT);
+    lMock.close();
+    if (hadProvL) fs.copyFileSync(provBakL, state.PROVIDERS_PATH); else { try { fs.unlinkSync(state.PROVIDERS_PATH); } catch (e) {} }
+    try { fs.unlinkSync(provBakL); } catch (e) {}
+
+    const hookEnv = { ...process.env, WE_NEED_DS_TEST_PORT: String(L_PORT), WE_NEED_DS_PROVIDERS_PATH: path.join(ISOL_DIR, 'cc-haha', 'providers.json'), WE_NEED_DS_DATA_DIR: path.join(ISOL_DIR, 'we-need-ds') };
+    fs.writeFileSync(path.join(ISOL_DIR, 'cc-haha', 'providers.json'), JSON.stringify({
+      activeId: 'h-ds',
+      providers: [{ id: 'h-ds', name: 'H-DS', baseUrl: `http://127.0.0.1:${L_PORT}`, apiKey: 'sk-h', models: { a: 'deepseek-v4-pro' } }]
+    }, null, 2));
+    state.writeState({ enabled: true, proxyUrl: `http://127.0.0.1:${L_PORT}`, providers: { 'h-ds': { name: 'H-DS', originalUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-h' } }, keyMap: { 'sk-h': 'https://api.deepseek.com/anthropic' }, defaultUpstream: 'https://api.deepseek.com/anthropic', ts: new Date().toISOString() });
+    execSync(`node "${path.join(__dirname, 'hooks', 'session-end.js')}"`, { env: hookEnv, encoding: 'utf8' });
+    const seProv = JSON.parse(fs.readFileSync(path.join(ISOL_DIR, 'cc-haha', 'providers.json'), 'utf8'));
+    const seState = state.readState();
+    check('L10a session-end 还原孤儿 provider 到真实上游', seProv.providers[0].baseUrl === 'https://api.deepseek.com/anthropic');
+    check('L10b session-end 保留拦截意图(enabled 仍 true)', seState.enabled === true);
+
+    fs.writeFileSync(path.join(ISOL_DIR, 'cc-haha', 'providers.json'), JSON.stringify({
+      activeId: 'h-ds',
+      providers: [{ id: 'h-ds', name: 'H-DS', baseUrl: 'https://api.deepseek.com/anthropic', apiKey: 'sk-h', models: { a: 'deepseek-v4-pro' } }]
+    }, null, 2));
+    state.writeState({ enabled: false, providers: {}, keyMap: {}, defaultUpstream: null });
+    execSync(`node "${path.join(__dirname, 'hooks', 'session-start.js')}"`, { env: hookEnv, encoding: 'utf8' });
+    const ssProv = JSON.parse(fs.readFileSync(path.join(ISOL_DIR, 'cc-haha', 'providers.json'), 'utf8'));
+    check('L11 session-start 在 enabled=false 时不自动接管(尊重关闭意图)', ssProv.providers[0].baseUrl === 'https://api.deepseek.com/anthropic' && !ssProv.providers.some(p => p.baseUrl.includes(String(L_PORT))));
+    killPort(L_PORT);
 
     upstreamMain.close();
     upstreamSecond.close();

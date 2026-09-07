@@ -3,6 +3,28 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.4.0 — 2026-09-07
+
+### Fixed (deep audit + third-party retry comparison)
+- **H1 — invalid `--provider` no longer destroys an existing takeover.** `enableInterception` ran `restoreAllProxied`/`removeAllCopies` *before* validating the requested provider, so a bad `--provider` id wiped the current hook then bailed. Validation now happens first; every rejection path returns before any mutation. Regression test L9a/L9b.
+- **Retry storm eradicated (classified retry).** The proxy sits between aggressive-retry clients (Claude Code CLI retries ~10×) and an upstream that may itself retry; the old blanket "retry on any error" could stack into 30+ attempts. Now: deterministic network errors (`ENOTFOUND`/`EAI_AGAIN`/`EHOSTUNREACH`/`EACCES`/`EPERM`/invalid URL) fail fast with **no retry**; only transient failures (empty body, reset, 408/409/425/429, 5xx, timeouts) retry. Default `upstreamRetries` lowered `2 → 1`. `ECONNREFUSED` deliberately stays retryable (covers local-relay restart windows). Tests L2a–L2d, L5, L6a/L6b.
+- **Client disconnect cancels upstream.** A hoisted per-request `ctx.clientGone` flag (set on `res` close) is checked before every attempt, after the response arrives, and in the catch — a gone client no longer triggers further retries or leaves a half-forwarded stream. A latent `const ctx = {}` shadowing bug inside the request handler (which had silently disabled the whole mechanism) is removed. Test L7.
+- **`Retry-After` clamped to 0–60s** and the exponential backoff capped at 60s, so an absurd header can't wedge the proxy. Tests L1a–L1d.
+- **Standard error bodies.** Proxy-generated 502/400 responses now emit Anthropic (`{type:"error",error:{type:"api_error",message}}`) or OpenAI (`{error:{message,type,code}}`) shapes based on the request path, instead of an ad-hoc `{error:{message}}`. Tests L3a/L3b, L5b.
+- **M2 — `ds` substring false-match fixed.** `isDeepSeekProModel`/`providerHasTargetModels` matched any normalized name *containing* `ds`, so `models`, `adsl`, etc. could false-trigger. Now `ds` must be a standalone token (delimited by separators/boundaries). Tests L4a–L4e.
+- **M1 — hook intent consistency.** `SessionEnd` now calls `recoverOrphans` (restore providers to direct but **keep `enabled`**) instead of `disableInterception` (which cleared the intent); `SessionStart` only auto-hooks when the ledger is `enabled`, so a deliberate `off` is no longer silently re-opened next session. Tests L10a/L10b, L11.
+- **M3 — stale keyMap pruning.** Keys no longer present in the provider pool are dropped on takeover, preventing routing to a deleted provider's old upstream.
+- **M4 — malformed request-path guard.** Paths not starting with a single slash are rejected with 400 (blocks `//host`-style absolute-form / SSRF-ish probes).
+- **M5 — exact port match in `killDaemonOnPort`.** Port matching now compares the full trailing segment instead of a substring, so killing `:2032` no longer matches `:20329`.
+- **L2 — `env/default` sentinel restored** in `resolveTargetBaseUrl` (a prior cleanup had dropped it, hanging the env-fallback route).
+- **L3 — `--provider` missing-value validation** in `ctl.js` (a trailing `--provider` with no argument now errors clearly instead of silently taking over the default).
+
+### Docs
+- README (zh + en): `upstreamRetries` default `2 → 1` with classified-retry rationale; backoff/`Retry-After` clamp documented; hook semantics rewritten (SessionEnd keeps intent, SessionStart respects `off`); DS-detection rule updated to the standalone-`ds`-token form; version line `2.3.x → 2.4.x`.
+
+### Tests
+- New Phase L (test_full, +28): backoff growth/clamp, retry classification, standard error bodies, M2 false-match regression, ENOTFOUND fast-fail, 5xx retry count, client-disconnect no-retry, `/ctl on` providerId end-to-end + H1 regression, session-end intent retention, session-start `off` respect. **127 assertions green.**
+
 ## v2.3.0 — 2026-09-07
 
 ### Added (provider selection at takeover time)

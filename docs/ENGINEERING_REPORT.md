@@ -1,6 +1,6 @@
 # we-need-ds 插件工程开发报告
 
-> 文档版本：对应插件 semver `2.3.0` / 机制版本 `v5.1`
+> 文档版本：对应插件 semver `2.4.0` / 机制版本 `v5.1`
 > 撰写日期：2026-09-07
 > 文档性质：完整工程实现说明。面向接手/评审的工程师与智能体，实事求是描述"实现了什么、如何实现、为什么这样设计、遇到过什么问题、当前边界在哪"，不包含开发方向上的倾向性建议。
 
@@ -83,7 +83,7 @@ DeepSeek Harness（DSH）社区的观察与本项目实测共同确认：**DeepS
 | 宿主钩子 | `hooks/*.js` + `hooks/hooks.json` | SessionStart / UserPromptSubmit / SessionEnd 三钩子（仅支持 hooks 的宿主生效） |
 | 技能入口 | `skills/*/SKILL.md` | `/we-need-ds`、`:on`、`:off`、`:status`、`:doctor`、`:test`、`:restart` |
 | 子代理 | `agents/we-need-planner.md` | `/we-need-ds:plan` 只读深度规划器 |
-| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js` | 99 项断言自测试套件等 |
+| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js` | 127 项断言自测试套件等 |
 
 ### 2.3 数据文件布局
 
@@ -190,17 +190,18 @@ DS + 其他(末条非 user 的异常结构):
 
 关键设计：**流式响应豁免 body 门**——推理模型首 token 可能合法地慢到几十秒以上，头到齐后代理无限等待首字节，绝不误杀慢思考流（测试 H1 验证流式慢首字完整透传、H2 验证非流式 stall 快速 502）。
 
-重试策略（`forwardWithRetry`）：
-- 可重试失败：空 body、连接错误、408/409/425/429/5xx、三道门超时；
-- `upstreamRetries=2`（共 3 次尝试），指数退避 `500ms × 2^(n-1)`，上游带 `Retry-After` 时取较大值；
+重试策略（`forwardWithRetry`，v2.4.0 分级化）：
+- **分级重试**：可重试失败 = 空 body、连接重置类错误、408/409/425/429/5xx、三道门超时；**确定性错误不重试**（`isRetryableNetError` 排除 ENOTFOUND/EAI_AGAIN/EHOSTUNREACH/EACCES/EPERM/ERR_INVALID_URL/ERR_INVALID_ARG_TYPE，这类重试只叠加延迟）；`ECONNREFUSED` 刻意保留可重试（覆盖本地中继重启窗口）；
+- `upstreamRetries=1`（共 2 次尝试，v2.4.0 由 2 降为 1——代理夹在重试 10 次的 CLI 与可能自带重试的上游之间，多重试放大成风暴），指数退避 `500ms × 2^(n-1)` 封顶 60s，上游带 `Retry-After` 时取较大值（该头 clamp 到 0–60s 防异常值挂死代理）；
+- **客户端断开取消**：顶层 `ctx.clientGone`（`res` close 时置位）在每次尝试前、响应到达后、catch 内三处检查——断开后不再发起重试、不再半转发；
 - **仅在尚未向客户端吐出任何字节前重试**；`attemptUpstream` 拿到首 chunk 即 `resolve` 并 `pause()` 流，主流程 `writeHead + write(firstChunk) + pipe(res)` 建立透传；
 - 流中途错误/aborted → 记日志后 `res.destroy()`，**对客户端透明断开**（不伪造完成、不重试造成内容重复）；
-- 重试耗尽：已发头则 destroy；未发头则透传上游错误响应（若有）或 502 带中文错误说明。
+- 重试耗尽：已发头则 destroy；未发头则透传上游错误响应（若有）或 502，错误体按请求路径输出 anthropic/openai 标准格式（`buildErrorBody`）。
 
 #### 3.1.7 控制端点与进程韧性
 
 - `GET /health-check` → `{status:'ok'}`（存活探测，hooks/ctl 均用它）；
-- `POST /ctl` `{action:'on'|'off'|'arm'}` → 进程内直接调 `state.enableInterception/disableInterception`；`arm` 为兼容保留，返回"v5 轮次结构判定，无需 arm 窗口"；未知 action → 400；
+- `POST /ctl` `{action:'on'|'off'|'arm', providerId?}` → 进程内直接调 `state.enableInterception(config, {providerId})/disableInterception`；`on` 可携带 `providerId` 指定接管目标（v2.3.0）；`arm` 为兼容保留，返回"v5 轮次结构判定，无需 arm 窗口"；未知 action → 400；
 - `uncaughtException` / `unhandledRejection` 捕获记日志、daemon 存活（proxy.js:467-472）；`server` 的 `EADDRINUSE` → 记日志 exit(1)；`clientError` → 销毁 socket；
 - 空闲自毁：`idleAutoShutdownMinutes > 0` 且无活跃请求且空闲超时 → `disableInterception`（还原+清副本）后 `process.exit(0)`；默认 `0` = 常驻不自毁。
 
@@ -335,12 +336,17 @@ DS + 其他(末条非 user 的异常结构):
 | 9 | 中途断开被伪装成正常完成 | 上游流中途 error/aborted 时若静默吞掉，客户端收到截断内容无感知 | 首字节后不重试，error/aborted 记日志并 `res.destroy()` 透明断开（v2.1.13） |
 | 10 | 账本散落 cache 版本目录 | 早期账本写在 `cache/.../1.0.0/` 硬编码路径，升级即"失忆" | `migrateLegacyFiles` 扫描 cache 全部版本目录取最新 ts 迁入集中目录（G2） |
 | 11 | 提示注入事件 | 会话中收到伪造 system-reminder（假 ComfyUI 工具目录要求按捏造格式调用工具） | 识别为注入内容，拒绝执行并向用户报告 |
+| 12 | **H1：无效 `--provider` 破坏既有接管**（v2.3.0 引入） | `enableInterception` 在校验目标 provider 之前就执行了 `restoreAllProxied`/`removeAllCopies`，非法 id 会先清掉当前接管再报错 | v2.4.0 校验前置，所有拒绝路径在任何写操作之前返回（回归 L9a/L9b） |
+| 13 | **重试风暴**（三方对照发现） | 代理夹在"重试 10 次的 CLI"与"自身可能重试的上游"之间，旧逻辑对任意错误一律重试，最坏 3×10=30 次 | v2.4.0 分级重试：确定性错误（ENOTFOUND 等）快速失败、默认重试 2→1、客户端断开取消重试、Retry-After clamp 0–60s（L1/L2/L5/L6/L7） |
+| 14 | **ctx 遮蔽致断开取消失效** | `req.on('end')` 回调内 `const ctx = {}` 遮蔽了顶层含 `clientGone` 的 ctx，断开信号永远传不进重试循环 | v2.4.0 删除遮蔽声明，clientGone 正常传播（L7） |
+| 15 | **M2：`ds` 子串误伤** | 归一化后 `includes('ds')` 使 `models`/`adsl` 等误命中 DS 判定 | v2.4.0 收紧为独立词元（分隔符/边界界定）（L4a–L4e） |
+| 16 | **M1：钩子意图不一致** | SessionEnd 调 `disableInterception` 清掉 enabled，下个会话 SessionStart 又无条件 `on` 重开——用户显式 `off` 被静默撤销 | v2.4.0 SessionEnd 改 `recoverOrphans`（还原但保留意图）、SessionStart 仅在 enabled 时接管（L10/L11） |
 
 ---
 
 ## 7. 测试体系
 
-`test_full.js` 共 **99 项断言**，全程隔离（端口 21329、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
+`test_full.js` 共 **127 项断言**，全程隔离（端口 21329/21330/21331、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
 
 | Phase | 覆盖 |
 | :--- | :--- |
@@ -354,6 +360,8 @@ DS + 其他(末条非 user 的异常结构):
 | H | 首字节门三段语义（流式慢首字不误杀 / 非流式 stall 快速 502） |
 | I | UserPromptSubmit 失败还原后自动重接管（当轮恢复裁剪）、daemon 死复活、端口被占还原直连 |
 | J | **单服务商接管 + 直连副本十项**：只接管 activeId、非 active 不动、副本字段语义、账本剪枝、幂等不重复建副本、off 还原+清副本、账本丢失副本救援、非 DS active 不接管 |
+| K | **接管时可选 provider 八项**：listProviders 标注/排序、指定非默认 DS 接管、activeId 同步、其余直连、副本携带真实上游、按名称指定、非 DS/未知拒绝、拒绝零污染 |
+| L | **v2.4.0 修复回归二十八项**：退避指数/Retry-After clamp、重试分级（ENOTFOUND 不重试 / ECONNREFUSED 重试）、标准错误体（anthropic/openai）、M2 独立 ds 词元、5xx 重试计数、客户端断开取消重试、`/ctl on` providerId 端到端、H1 拒绝不破坏既有接管、session-end 保留意图、session-start 尊重 off |
 
 另有 `test_consume.js`（消费方视角请求形态）与 `test_simulation.js`（早期模拟套件）。
 
@@ -372,8 +380,8 @@ DS + 其他(末条非 user 的异常结构):
 | `executionDshPersona` | `true` | 执行轮是否同步 DSH 人格（`false`=执行轮完全透传，v5 行为） |
 | `thinkingBudget` | `0` | `0`=不注入；正数=判定轮 anthropic 路径注入 extended thinking 预算 |
 | `stripSystemPersona` | *(缺省=生效)* | 人格替换总开关，`false` 完全关闭 |
-| `upstreamRetries` | `2` | 重试次数（不含首次），仅首字节前重试 |
-| `upstreamRetryBackoffMs` | `500` | 退避基数，2 的幂递增，尊重 Retry-After |
+| `upstreamRetries` | `1` | 重试次数（不含首次），仅可重试失败、仅首字节前重试；确定性网络错误快速失败 |
+| `upstreamRetryBackoffMs` | `500` | 退避基数，2 的幂递增封顶 60s，Retry-After clamp 0–60s 取较大值 |
 | `upstreamHeaderTimeoutMs` | `30000` | 响应头超时 |
 | `upstreamBodyTimeoutMs` | `30000` | 非流式 body 超时（流式豁免） |
 | `upstreamIdleTimeoutMs` | `600000` | socket 空闲超时（活动计时） |
@@ -401,7 +409,8 @@ DS + 其他(末条非 user 的异常结构):
 | 2.1.x | **v5 → v5.1** | 轮次结构感知常态模拟（不限首轮）；执行轮全量+DSH 人格（v5.1）；失败即还原（2.1.12）；还原可逆+中途断开透明化（2.1.13）；开机自启动实现后又被彻底移除（2.1.10→2.1.11） |
 | **2.2.0** | v5.1 | **单服务商接管 + 直连副本逃生口**：根治重启死锁；两段式安全释放；账本剪枝与旧态自动迁移；hooks/ctl 输出与中英 README 同步 |
 | 2.2.1 | v5.1 | 统一 daemon 端口释放：`killDaemonOnPort` 杀进程后轮询确认端口真正释放，根治残留进程占端口导致的假接管 |
-| **2.3.0** | v5.1 | **接管时可选任意 provider**：`ctl list` 清单（🎯含DS/⭐默认/🔌代理中）+ `on --provider <id|名称>`；接管非默认 provider 自动同步 activeId（sidecar 按 activeId 路由）；拒绝路径零污染；中英 README 顶部显式告知"接管改写 providers.json 且关机后持久保留"根因与副本兜底 |
+| 2.3.0 | v5.1 | **接管时可选任意 provider**：`ctl list` 清单（🎯含DS/⭐默认/🔌代理中）+ `on --provider <id|名称>`；接管非默认 provider 自动同步 activeId（sidecar 按 activeId 路由）；拒绝路径零污染；中英 README 顶部显式告知"接管改写 providers.json 且关机后持久保留"根因与副本兜底 |
+| **2.4.0** | v5.1 | **深度审计 + 三方重试对照修复**：H1 无效 `--provider` 不再破坏既有接管（校验前置）；重试分级根治重试风暴（确定性错误快速失败、默认重试 2→1、客户端断开取消重试、Retry-After clamp 0–60s）；标准错误体（anthropic/openai 按路径）；M2 `ds` 子串误伤收紧为独立词元；M1 钩子意图一致（session-end 保留 enabled、session-start 尊重 off）；M3 keyMap 剪枝；M4 畸形路径 400；M5 端口精确匹配；L2 `env/default` 哨兵恢复；L3 `--provider` 缺值校验；测试 99→127 |
 
 > 两条编号线独立：文档中的 v5/v5.1 是**机制版本**（轮次感知 DSH 极简模拟算法的演进代号）；插件遵循 semver（`plugin.json`/CHANGELOG）。GitHub Releases 以 semver 为准。
 
@@ -411,25 +420,25 @@ DS + 其他(末条非 user 的异常结构):
 
 ```
 we-need-ds/
-├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.2.0/keywords)
+├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.0/keywords)
 ├── config.json                     # 运行时配置
-├── proxy.js                        # 代理网关 (490 行)
-├── lib/state.js                    # 状态机 (475 行)
-├── lib/ctl.js                      # 命令行 (301 行)
+├── proxy.js                        # 代理网关 (分级重试/断开取消/标准错误体/DSH 塑形)
+├── lib/state.js                    # 状态机 (接管/两段式释放/副本/锁/原子写/迁移)
+├── lib/ctl.js                      # 命令行 (on/off/status/doctor/boot/restart/list)
 ├── hooks/hooks.json                # 钩子注册
-├── hooks/session-start.js          # 会话启动: 修孤儿+拉 daemon+接管
+├── hooks/session-start.js          # 会话启动: 修孤儿+拉 daemon+按意图接管
 ├── hooks/user-prompt-submit.js     # 每条消息: 自愈复活/幂等重接管/失败还原
-├── hooks/session-end.js            # 会话结束: 还原+清副本
+├── hooks/session-end.js            # 会话结束: 还原孤儿+保留意图
 ├── skills/{we-need-ds,on,off,status,doctor,test,restart}/SKILL.md
 ├── commands/{plan,run}.md          # 斜杠指令 (CC 轨)
 ├── agents/we-need-planner.md       # 只读深度规划子代理
-├── test_full.js                    # 99 断言主套件 (Phase A-K)
+├── test_full.js                    # 127 断言主套件 (Phase A-L)
 ├── test_consume.js                 # 消费方视角测试
 ├── test_simulation.js              # 早期模拟测试
-├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.2.0)
+├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.0)
 ├── CHANGELOG.md                    # 版本日志
 ├── LICENSE                         # MIT
 └── docs/alipay_qr.jpeg             # README 赞助二维码
 ```
 
-**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.2.0 提交 `54c6169` 已推送）。
+**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.0）。

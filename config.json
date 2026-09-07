@@ -14,5 +14,6 @@
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true,
-  "thinkingBudget": 0
+  "thinkingBudget": 0,
+  "upstreamRetries": 1
 }

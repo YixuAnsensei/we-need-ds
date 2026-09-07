@@ -5,8 +5,7 @@ const state = require('./lib/state.js');
 const config = state.loadConfig();
 
 function isSelfProxyUrl(url) {
-  if (!url) return false;
-  return url.includes(`:${config.port}`) || url.includes(`:${config.port}/`);
+  return state.isSelfProxyUrl(url, config.port);
 }
 
 function resolveTargetBaseUrl(req) {
@@ -65,7 +64,7 @@ function isDeepSeekProModel(modelName) {
   });
   if (isConfigured) return true;
 
-  const hasDeepSeek = normalized.includes('deepseek') || normalized.includes('ds');
+  const hasDeepSeek = raw.includes('deepseek') || /(^|[-_./\s])ds(?=[-_./\s]|v|\d|$)/.test(raw);
   const hasV4 = normalized.includes('v4') || normalized.includes('4pro');
   const hasPro = normalized.includes('pro');
   const hasFlash = normalized.includes('flash');
@@ -101,6 +100,32 @@ function shouldFilterTools(body) {
 }
 
 const DSH_MINIMAL_PROMPT = 'You are a helpful software engineer assistant.';
+
+const NON_RETRYABLE_NET_CODES = new Set(['ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'EACCES', 'EPERM', 'ERR_INVALID_URL', 'ERR_INVALID_ARG_TYPE']);
+
+function isRetryableNetError(err) {
+  return !NON_RETRYABLE_NET_CODES.has(err && err.code);
+}
+
+function computeBackoffMs(baseBackoff, attempt, retryAfterHeader) {
+  let backoff = baseBackoff * Math.pow(2, attempt - 1);
+  if (retryAfterHeader) {
+    const ra = parseInt(retryAfterHeader, 10);
+    if (!isNaN(ra)) {
+      const raMs = Math.min(Math.max(ra, 0), 60) * 1000;
+      backoff = Math.max(backoff, raMs);
+    }
+  }
+  return Math.min(backoff, 60000);
+}
+
+function buildErrorBody(reqUrl, statusCode, message) {
+  const fmt = formatFromRequestPath(reqUrl);
+  if (fmt === 'openai') {
+    return JSON.stringify({ error: { message, type: 'api_error', code: null } });
+  }
+  return JSON.stringify({ type: 'error', error: { type: 'api_error', message } });
+}
 
 function formatFromRequestPath(reqUrl) {
   if (!reqUrl) return null;
@@ -307,7 +332,8 @@ function attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, 
     });
     req2.on('error', (e) => {
       const err = new Error('upstream request error: ' + e.message);
-      err.retryable = true;
+      err.code = e.code;
+      err.retryable = isRetryableNetError(e);
       fail(err);
     });
 
@@ -324,8 +350,17 @@ async function forwardWithRetry(transport, targetUrl, method, headers, outgoingB
   const idleTimeout = typeof config.upstreamIdleTimeoutMs === 'number' ? config.upstreamIdleTimeoutMs : 600000;
   let attempt = 0;
   while (true) {
+    if (ctx.clientGone) {
+      state.log(`client gone before attempt ${attempt + 1}, aborting upstream: ${targetUrl.href}`);
+      return;
+    }
     try {
       const { proxyRes, firstChunk } = await attemptUpstream(transport, targetUrl, method, headers, outgoingBuffer, ctx, headerTimeout, bodyTimeout, idleTimeout);
+      if (ctx.clientGone) {
+        state.log(`client gone after upstream responded, discarding response: ${targetUrl.href}`);
+        try { proxyRes.destroy(); } catch (e) {}
+        return;
+      }
       res.writeHead(proxyRes.statusCode, proxyRes.headers);
       if (firstChunk && firstChunk.length > 0) res.write(firstChunk);
       proxyRes.pipe(res);
@@ -341,8 +376,12 @@ async function forwardWithRetry(transport, targetUrl, method, headers, outgoingB
       return;
     } catch (err) {
       attempt++;
-      if (attempt > maxRetries) {
-        state.log(`upstream failed after ${attempt} attempts: ${targetUrl.href} -> ${err.message}`);
+      if (ctx.clientGone) {
+        state.log(`client gone after attempt ${attempt} failed, not retrying: ${targetUrl.href}`);
+        return;
+      }
+      if (!err.retryable || attempt > maxRetries) {
+        state.log(`upstream failed (attempts=${attempt}, retryable=${!!err.retryable}): ${targetUrl.href} -> ${err.message}`);
         if (res.headersSent) {
           try { res.destroy(); } catch (e) {}
           return;
@@ -354,14 +393,10 @@ async function forwardWithRetry(transport, targetUrl, method, headers, outgoingB
           return;
         }
         res.writeHead(502, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: { message: `we-need-ds 上游经 ${attempt} 次尝试仍不可用 (${targetUrl.href}): ${err.message}` } }));
+        res.end(buildErrorBody(ctx.reqUrl, 502, `we-need-ds 上游经 ${attempt} 次尝试仍不可用 (${targetUrl.href}): ${err.message}`));
         return;
       }
-      let backoff = baseBackoff * Math.pow(2, attempt - 1);
-      if (err.retryAfter) {
-        const ra = parseInt(err.retryAfter, 10);
-        if (!isNaN(ra)) backoff = Math.max(backoff, ra * 1000);
-      }
+      const backoff = computeBackoffMs(baseBackoff, attempt, err.retryAfter);
       state.log(`upstream attempt ${attempt} failed (${err.message}), retry in ${backoff}ms: ${targetUrl.href}`);
       await new Promise(r => setTimeout(r, backoff));
     }
@@ -371,7 +406,12 @@ async function forwardWithRetry(transport, targetUrl, method, headers, outgoingB
 const server = http.createServer((req, res) => {
   lastActiveTime = Date.now();
   activeRequests++;
-  res.on('close', () => { activeRequests--; });
+  const ctx = { clientGone: false, reqUrl: req.url };
+  res.on('close', () => {
+    activeRequests--;
+    ctx.clientGone = true;
+    if (ctx.proxyReq) { try { ctx.proxyReq.destroy(); } catch (e) {} }
+  });
 
   if (req.url === '/health-check') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -404,11 +444,18 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  if (!/^\/(?!\/)/.test(req.url || '')) {
+    state.log(`reject malformed request path: ${JSON.stringify(req.url)}`);
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(buildErrorBody(req.url, 400, 'we-need-ds 仅接受以单斜杠开头的请求路径'));
+    return;
+  }
+
   const upstreamBase = resolveTargetBaseUrl(req);
   if (!upstreamBase) {
     state.log(`resolve fail: ${req.url} 无法确定真实上游（keyMap/defaultUpstream/env 均无），拒绝静默错发`);
     res.writeHead(502, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: { message: 'we-need-ds 无法确定该请求的真实上游地址（apiKey 未在账本中、且无 defaultUpstream/环境变量兜底），已拒绝以避免错发到其他服务商。请重新开启拦截或检查 provider 配置。' } }));
+    res.end(buildErrorBody(req.url, 502, 'we-need-ds 无法确定该请求的真实上游地址（apiKey 未在账本中、且无 defaultUpstream/环境变量兜底），已拒绝以避免错发到其他服务商。请重新开启拦截或检查 provider 配置。'));
     return;
   }
   const targetUrl = buildTargetUrl(upstreamBase, req.url);
@@ -449,7 +496,6 @@ const server = http.createServer((req, res) => {
       headers['content-length'] = outgoingBuffer.length;
     }
 
-    const ctx = {};
     res.on('error', (err) => {
       state.log(`client res error: ${req.url} -> ${err.message}`);
       try { if (ctx.proxyReq) ctx.proxyReq.destroy(); } catch (e) {}
@@ -459,7 +505,7 @@ const server = http.createServer((req, res) => {
       .catch(err => {
         state.log(`forwardWithRetry unexpected: ${req.url} -> ${err && err.message}`);
         if (!res.headersSent) {
-          try { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: { message: `we-need-ds 代理异常: ${err.message}` } })); } catch (e) {}
+          try { res.writeHead(502, { 'Content-Type': 'application/json' }); res.end(buildErrorBody(ctx.reqUrl, 502, `we-need-ds 代理异常: ${err.message}`)); } catch (e) {}
         }
       });
   });
@@ -488,4 +534,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, isToolFollowup, resolveTargetBaseUrl, formatFromRequestPath, buildTargetUrl, config };
+module.exports = { shouldFilterTools, processRequestBody, isDecisionTurn, isToolFollowup, resolveTargetBaseUrl, formatFromRequestPath, buildTargetUrl, config, computeBackoffMs, isRetryableNetError, buildErrorBody, isDeepSeekProModel };

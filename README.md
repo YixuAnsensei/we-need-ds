@@ -78,7 +78,7 @@ sequenceDiagram
    * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
    * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
 3. **🛡️ 多重防呆生命周期与无死锁保障**：
-   * **宿主钩子自动接管**：SessionStart 钩子自启动、UserPromptSubmit 钩子每条新消息自检复活、SessionEnd 钩子会话结束批量还原（在支持插件 hooks 的宿主上生效）；
+   * **宿主钩子自动接管**：SessionStart 钩子拉起 daemon 并**仅在账本 `enabled`（你此前执行过 `on` 且未 `off`）时**自动重接管；UserPromptSubmit 钩子每条新消息自检复活；SessionEnd 钩子会话结束把指向代理的 provider 还原直连但**保留拦截意图**（下个会话自动重接管）——想永久关闭请显式执行 `/we-need-ds:off`（在支持插件 hooks 的宿主上生效）；
    * **重启后手动恢复（不依赖宿主钩子，不做系统级注册）**：Windows 关机/重启会直接杀死 daemon 且绕过所有钩子，被接管的本体会停留在指向死代理端口的"孤儿"状态。但**其余服务商和直连副本始终直连**，所以你总能发消息、也能跑恢复命令——不再有"全部指向死端口、连 on 都发不出"的死锁。恢复：在 cc-haha 切到直连副本（或任意未接管的 provider）后执行 `/we-need-ds:on`（或终端 `node lib/ctl.js boot`）——拉起 daemon + 修复孤儿 + 按账本重新接管。本插件不注册计划任务、不写 Startup 文件夹，卸载即干净（见下方"重启后的手动恢复"）；
    * **常驻守护**：daemon 默认常驻不退出（`idleAutoShutdownMinutes: 0`）；
    * **非目标模型 100% 零侵入**：Claude / GPT / Gemini / Qwen 纯字节流直通。
@@ -123,7 +123,7 @@ sequenceDiagram
    * **方式 A · 插件代选（推荐，无需手动预设置）**：直接执行 `/we-need-ds:on` 或 `/we-need-ds`，插件会先列出你配置的所有 provider（标注哪个含 DeepSeek Pro 模型 `🎯`、哪个是当前默认 `⭐`），若含 DS 模型的有多个会让你选一个，然后接管它。**接管非默认 provider 时插件会自动把 cc-haha 的 `activeId` 切到它**——因为 sidecar 按 `activeId` 路由，不同步切换的话新会话仍会走旧 provider。
    * **方式 B · 手动预设置**：先在 cc-haha 里把你真正要用的那个 DeepSeek Pro 服务商设为默认，再执行 `/we-need-ds:on`（省略 `--provider`），插件直接接管当前默认。
    * 终端等价命令：`node lib/ctl.js list` 查看清单；`node lib/ctl.js on --provider <id 或名称>` 指定接管目标。
-   * **接管与否只看该 provider 声明的 `models` 字段**：插件读取 `providers.json` 里这个服务商的 `models`（main/haiku/sonnet/opus 等映射），只要其中任一模型名命中 DeepSeek Pro 判定（在 `targetModels` 列表内，或归一化后含 `deepseek|ds` 且含 `v4|pro|flash`）才接管。像 9Router 这类中转站，即使它**实际能转发** DeepSeek 模型，只要它的 `models` 字段里没写 deepseek 系模型名，插件就判定它"非 DS provider"而**不接管**（保持直连、不裁剪）。所以请选择 `models` 里确实声明了 DeepSeek Pro 模型的服务商。
+   * **接管与否只看该 provider 声明的 `models` 字段**：插件读取 `providers.json` 里这个服务商的 `models`（main/haiku/sonnet/opus 等映射），只要其中任一模型名命中 DeepSeek Pro 判定（在 `targetModels` 列表内，或含 `deepseek` 字样、或含独立的 `ds` 词元（前后为分隔符/边界，避免 `models`/`adsl` 之类子串误伤）且同时含 `v4|pro|flash` 特征）才接管。像 9Router 这类中转站，即使它**实际能转发** DeepSeek 模型，只要它的 `models` 字段里没写 deepseek 系模型名，插件就判定它"非 DS provider"而**不接管**（保持直连、不裁剪）。所以请选择 `models` 里确实声明了 DeepSeek Pro 模型的服务商。
    * 其余服务商的 `baseUrl` 一律不动，保持各自真实上游——这正是防死锁的关键：daemon 万一死了，你还有大量直连入口和自动生成的直连副本可切换。
 2. **开启即接管 + 建副本**：
    * 执行 `/we-need-ds:on`（或 `on --provider <id>`）：拉起 daemon、把目标 DS 服务商的 `baseUrl` 切到代理端口、并复制一份 `· 直连副本`（指向原始真实上游）作为逃生口。
@@ -211,7 +211,7 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
   "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true,
   "thinkingBudget": 0,
-  "upstreamRetries": 2,
+  "upstreamRetries": 1,
   "upstreamRetryBackoffMs": 500,
   "upstreamHeaderTimeoutMs": 30000,
   "upstreamBodyTimeoutMs": 30000,
@@ -230,8 +230,8 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
 | `executionDshPersona` | `true` | 执行轮（工具续跑）是否也同步切换为 DSH 极简人格。默认 `true`（全程 DSH 人格，仅工具集不同）；设为 `false` 则执行轮完全原样透传（保留 Claude Code 原始人格）。 |
 | `thinkingBudget` | `0` | 判定轮是否附带 Anthropic extended thinking 预算。默认 `0` = 关闭（不注入任何 thinking 字段，依赖模型原生思维链）；设为正数 N 则在判定轮请求中注入 `thinking: {type:"enabled", budget_tokens:N}`，作为触发深度推理链的可选增强手段。 |
 | `stripSystemPersona` | *(缺省=生效)* | 人格替换总开关。默认所有命中 DS 目标模型的请求都替换为 DSH 单行人格；显式设为 `false` 可完全关闭人格替换（仅保留工具裁切）。 |
-| `upstreamRetries` | `2` | 上游不稳定时的重试次数（不含首次，默认共 3 次尝试）。上游返回空 body、连接被重置、5xx、或超时（见下三项）时自动重试；**仅在尚未向客户端吐出任何字节前重试**，流式响应一旦开始转发就不再重试（避免内容重复）。设为 `0` 关闭重试。 |
-| `upstreamRetryBackoffMs` | `500` | 重试退避基数（毫秒），按 2 的幂递增（500→1000→…）；若上游返回 `Retry-After` 头则取两者较大值。 |
+| `upstreamRetries` | `1` | 上游不稳定时的重试次数（不含首次，默认共 2 次尝试）。**只对可重试失败重试**：空 body、连接被重置、408/409/425/429、5xx、超时；确定性错误（DNS 解析失败 ENOTFOUND、主机不可达、非法 URL 等）**不重试直接失败**——这类错误重试只会叠加延迟。客户端断开后不再发起任何重试。代理刻意保守：上游本身可能已有重试，代理再叠多重试会放大成重试风暴。设为 `0` 关闭重试。 |
+| `upstreamRetryBackoffMs` | `500` | 重试退避基数（毫秒），按 2 的幂递增（500→1000→…），总封顶 60s；若上游返回 `Retry-After` 头则取两者较大值（`Retry-After` 被 clamp 到 0–60s，防恶意/异常头把代理挂死）。 |
 | `upstreamHeaderTimeoutMs` | `30000` | **响应头超时**（毫秒）。请求发出后若上游在此时间内连响应头都没返回（连接级挂起），判定为可重试失败，快速失败而非拖到 socket 硬超时。 |
 | `upstreamBodyTimeoutMs` | `30000` | **非流式 body 超时**（毫秒）。仅对非流式（`Content-Type` 不是 `text/event-stream`）响应生效：头已到但在此时间内一个 body 字节都没有（"只发头不发体"的挂起），判定为可重试失败。**流式响应不受此门约束**——推理模型（如 deepseek-v4-pro）首 token 可能合法地慢到几十秒甚至更久，头到齐后代理会无限等待首字节，绝不误杀。 |
 | `upstreamIdleTimeoutMs` | `600000` | **socket 空闲超时**（毫秒）。上游连接上连续无任何活动达到该时长即判定为死连接并销毁（默认 10 分钟，覆盖长思考链的流式静默期）。 |
@@ -241,7 +241,7 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
 ## ⚠️ 边界与注意事项
 
 1. **账本信任链**：插件把 provider 的 `baseUrl` 改写为代理地址时，会把"改写瞬间的 baseUrl"记为真实上游（`originalUrl`）。因此**请确保 cc-haha 里每个 provider 的 baseUrl 指向的是真实上游**（官方端点或你自己的中转，如 9router 的 `:20128`）。若你把某个 provider 手动配成了**另一个代理地址**，插件会把这个代理地址当作真实上游记录并还原——这是设计边界，不是 bug。开启拦截前用 `/we-need-ds:doctor` 核对各 provider 的原始上游是否符合预期。
-2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.3.x`）。两者独立编号：机制 v5.1 对应插件 2.x 系列。GitHub Releases 以 semver 为准。
+2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.4.x`）。两者独立编号：机制 v5.1 对应插件 2.x 系列。GitHub Releases 以 semver 为准。
 3. **端口占用**：代理默认绑定 `127.0.0.1:20329`。若被占用请改 `config.json` 的 `port`；插件在端口变更时会自动把指向旧端口的 provider 先还原再按新端口接管，不会把代理地址误记为真实上游。
 4. **测试隔离（跑测试套件必读）**：自测试套件会改写 providers.json 与 runtime-state.json。为避免污染你正在使用的生产环境，跑测试前务必设置三个隔离环境变量，让测试全程读写临时目录、绝不碰生产文件：`WE_NEED_DS_TEST_PORT`（测试端口）、`WE_NEED_DS_PROVIDERS_PATH`（临时 providers.json 路径）、`WE_NEED_DS_DATA_DIR`（临时数据目录）。`test_full.js` / `test_consume.js` 已内置自动隔离（用 `os.tmpdir()` 临时目录），直接 `node test_full.js` 即可；手动跑 `ctl on/off` 等接管命令时若不想碰生产，同样设这三个变量。
 

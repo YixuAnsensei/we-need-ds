@@ -54,6 +54,12 @@ async function main() {
     state.log(up ? 'daemon started via session-start' : 'daemon failed to start');
   }
 
+  const st = state.readState();
+  if (!st.enabled) {
+    state.log('session-start: 拦截意图为关闭，daemon 保持待命，不自动开启接管（需要时执行 /we-need-ds:on）');
+    return;
+  }
+
   let result = await daemonCtl(config.port, 'on');
   if (result.reachable) {
     result = result.body || { ok: true };
@@ -65,14 +71,14 @@ async function main() {
   }
   if (result.ok) {
     if (result.activeHooked) {
-      console.log(`[we-need-ds] 拦截已开启：仅接管默认 provider「${result.activeHooked}」→ :${config.port}，并留直连副本作逃生口（会话结束自动还原）`);
+      console.log(`[we-need-ds] 拦截已开启：仅接管默认 provider「${result.activeHooked}」→ :${config.port}，并留直连副本作逃生口`);
     } else {
       console.log(`[we-need-ds] 拦截已开启：${result.note || '当前默认 provider 非 DeepSeek Pro，未接管（保持直连）'}`);
     }
   } else {
     const ds = state.detectDeadState(config);
     if (ds.dead) {
-      const off = state.disableInterception(config);
+      const off = state.recoverOrphans(config);
       const n = off && off.restoredList ? off.restoredList.length : 0;
       console.log(`[we-need-ds] 拦截开启失败：${result.reason}；已把 ${n} 个指向代理的 provider 还原直连（避免死锁，可随时 /we-need-ds:on 重试）`);
     } else {
