@@ -1,7 +1,7 @@
 # we-need-ds 插件工程开发报告
 
-> 文档版本：对应插件 semver `2.4.2` / 机制版本 `v5.1`
-> 撰写日期：2026-09-07
+> 文档版本：对应插件 semver `2.4.3` / 机制版本 `v5.2`
+> 撰写日期：2026-09-08
 > 文档性质：完整工程实现说明。面向接手/评审的工程师与智能体，实事求是描述"实现了什么、如何实现、为什么这样设计、遇到过什么问题、当前边界在哪"，不包含开发方向上的倾向性建议。
 
 ---
@@ -16,6 +16,24 @@ DeepSeek Harness（DSH）社区的观察与本项目实测共同确认：**DeepS
 | :--- | :--- | :--- |
 | 🟢 "We need..." 满血深度规划 | 面对复杂工程任务先做宏观拆解、边界推演、架构设计，思维链以 "We need..." 展开 | 请求中工具集极简（DSH 官方模式仅 bash + str_replace_editor 两件套 + 一行系统人格），命中 RL 训练的深度推理甜点区 |
 | 🔴 "Let me..." 浅层工具试探 | 陷入微观工具调用纠结、频繁试错、思维链退化为 Tool-Churning | 请求体携带数十个 MCP 工具 Schema + 数千行系统提示词，注意力被工具列表牵引 |
+
+#### 1.1.1 "We need" 触发的完整条件链（16 组对照实验，直连官方端点排除代理因素）
+
+v2.4.3 前用户实测仍无法触发思维链，遂做三轮共 16 组对照实验（全部直连官方端点，绕开代理，锁定纯模型侧因果）。结论：**触发条件链缺一不可**：
+
+| 条件 | 实验证据 | 是否可工程满足 |
+| :--- | :--- | :--- |
+| ① 单行 DSH 人格 | N 组（长人格 + 2 工具 + thinking）→ ❌；只裁工具不裁人格无效 | ✅ v5 起已实现 |
+| ② `thinking` 字段存在 | P 组（极简 + 无 thinking 字段）→ ❌；X 组 budget=2000 仍 ✅（字段必须存在，大小无所谓） | ✅ v5.2 默认注入（缺口1） |
+| ③ user 消息 reminder 噪声 < ~3 份 | F 组（25 份）/G 组（3 份）→ ❌；R 组（1 份）→ ✅；Q 组（等量纯文本无标签）→ ✅ | ✅ v5.2 判定轮剥离（缺口2） |
+| ④ 工具裁剪 | O 组（单行人格 + 24 工具 + thinking）→ ✅ | 对本任务非必要，但对齐 DSH 官方形态保留无害 |
+| ⑤ 历史 thinking 块风格 / metadata / tool_choice / 普通文本历史 | E/W/U/V/X/Y 组 → 全部无影响 | 无需处理 |
+
+**硬边界（缺口3，接受为设计边界）**：H 组证明历史中的 `tool_use`/`tool_result` 块会抑制字面前缀（退化为中文直推），但删除 `tool_use` 块会使 `tool_result` 成孤儿 → API 400，协议上不可能裁。缓解事实：H 组推理质量未崩（仍认真分析），仅丢字面 "We need" 前缀——**"We need" 是可观测量，不是目标本身**。
+
+**Q 组关键洞察**：抑制来自 `<system-reminder>` **标签结构本身**，不是文本量（等量纯文本无害）。故剥离按标签匹配，不按长度阈值。
+
+**语言镜像效应（v2.4.3 端到端活体实测确认）**：修复后对官方端点做因果闭环验证——英文任务返回 thinking 块以字面 **"We need answer user asks..."** 开头（链长 9000+ 字符）；中文任务同一机制返回 **"我们需要回答中文…"** 开头的同构深度规划链。模型随任务语言镜像该前缀。这解释了一类历史误判：用中文任务实测时链已满血触发，但字面 "We need" 被译成"我们需要"，肉眼易误读为未触发。判定是否满血应看**链的结构**（宏观拆解/权衡列举），不必执着英文前缀。
 
 ### 1.2 生态矛盾与开发目的
 
@@ -83,7 +101,7 @@ DeepSeek Harness（DSH）社区的观察与本项目实测共同确认：**DeepS
 | 宿主钩子 | `hooks/*.js` + `hooks/hooks.json` | SessionStart / UserPromptSubmit / SessionEnd 三钩子（仅支持 hooks 的宿主生效） |
 | 技能入口 | `skills/*/SKILL.md` | `/we-need-ds`、`:on`、`:off`、`:status`、`:doctor`、`:test`、`:restart` |
 | 子代理 | `agents/we-need-planner.md` | `/we-need-ds:plan` 只读深度规划器 |
-| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js`、`test_stress.js` | 135 项断言主套件 + 25 项并发压力审查等 |
+| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js`、`test_stress.js` | 144 项断言主套件 + 25 项并发压力审查等 |
 
 ### 2.3 数据文件布局
 
@@ -156,12 +174,18 @@ DS + 执行轮:
   executionDshPersona=true  → 仅替换人格为 DSH 单行，工具全量保留
   executionDshPersona=false → 完全透传（v5 行为）
 DS + 判定轮:
-  1. 工具裁剪: body.tools 过滤为 bootstrapCoreTools(Bash/Edit, 大小写不敏感)
+  1. reminder 剥离: stripSystemReminders 删除所有 user 消息中的 <system-reminder>…</system-reminder>
+     块（string 与数组 text 块两种形态，含历史 user 消息），折叠多余空行；
+     整条消息剥空时保留原文（防空 content 400）；非 text 块（tool_result/image）原样保留
+     —— 对照实验证明 reminder 噪声（CLAUDE.md/memory/MCP/currentDate 注入）会压灭思维链（测试 E13–E17 覆盖）
+  2. 工具裁剪: body.tools 过滤为 bootstrapCoreTools(Bash/Edit, 大小写不敏感)
      ∪ collectUsedToolNames(会话历史中已出现过的 tool_use/tool_calls 名称)
      —— 保留历史已调用工具是防止模型续写引用未声明工具导致协议校验失败
-  2. 人格替换: applyDshMinimalSystem
-  3. thinkingBudget>0 且 anthropic 路径 → 注入 thinking:{type:"enabled",budget_tokens:N}
+  3. 人格替换: applyDshMinimalSystem
+  4. thinkingBudget>0 且 anthropic 路径 → 注入 thinking:{type:"enabled",budget_tokens:N}
      （OpenAI 路径不注入，防中转站 400，测试 E7 覆盖）
+     max_tokens 守卫：body.max_tokens 存在且 ≤ budget 时跳过注入
+     —— Anthropic 要求 max_tokens > budget_tokens，宿主小 max_tokens 请求（标题生成等）注入会 400（测试 E11/E12 覆盖）
 DS + 其他(末条非 user 的异常结构):
   executionDshPersona=true → 仅替换人格
 ```
@@ -347,7 +371,7 @@ DS + 其他(末条非 user 的异常结构):
 
 ## 7. 测试体系
 
-`test_full.js` 共 **135 项断言**，全程隔离（端口 21329/21330/21331/21332、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
+`test_full.js` 共 **144 项断言**，全程隔离（端口 21329/21330/21331/21332、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
 
 | Phase | 覆盖 |
 | :--- | :--- |
@@ -355,7 +379,7 @@ DS + 其他(末条非 user 的异常结构):
 | B | 空闲自毁生命周期（自毁前还原 provider、enabled=false） |
 | C | 上游解析优先级（config.targetBaseUrl > keyMap > env 兜底） |
 | D | provider 映射根治（全新 provider 正确入账本、无硬编码白名单、孤儿不瞎猜还原） |
-| E | M1/M3 轮次边界、thinkingBudget 仅 anthropic 注入 |
+| E | M1/M3 轮次边界、thinkingBudget 仅 anthropic 注入、max_tokens clamp 守卫（E10–E12）、判定轮 system-reminder 剥离（E13–E17）、非 DS 带 reminder 透传（E18） |
 | F | URL 前缀/路径格式判定、原子写、端口变更先还原再接管、env 遮蔽、硬编码根治 |
 | G | 重复 on 幂等（originalUrl 不被污染）、账本迁移扫描 cache 版本目录 |
 | H | 首字节门三段语义（流式慢首字不误杀 / 非流式 stall 快速 502） |
@@ -380,7 +404,7 @@ DS + 其他(末条非 user 的异常结构):
 | `logDetails` | `false` | 记录每个透传请求的 URL 与上游 |
 | `idleAutoShutdownMinutes` | `0` | `0`=常驻；正数 N=空闲 N 分钟后还原并退出 |
 | `executionDshPersona` | `true` | 执行轮是否同步 DSH 人格（`false`=执行轮完全透传，v5 行为） |
-| `thinkingBudget` | `0` | `0`=不注入；正数=判定轮 anthropic 路径注入 extended thinking 预算 |
+| `thinkingBudget` | `8000` | `0`=不注入；正数=判定轮 anthropic 路径注入 extended thinking 预算（对照实验证明该字段必须存在才能触发 "We need"）。内置 max_tokens clamp 守卫：宿主 max_tokens ≤ budget 时跳过注入防 400 |
 | `stripSystemPersona` | *(缺省=生效)* | 人格替换总开关，`false` 完全关闭 |
 | `upstreamRetries` | `1` | 重试次数（不含首次），仅可重试失败、仅首字节前重试；确定性网络错误快速失败 |
 | `upstreamRetryBackoffMs` | `500` | 退避基数，2 的幂递增封顶 60s，Retry-After clamp 0–60s 取较大值 |
@@ -414,9 +438,10 @@ DS + 其他(末条非 user 的异常结构):
 | 2.3.0 | v5.1 | **接管时可选任意 provider**：`ctl list` 清单（🎯含DS/⭐默认/🔌代理中）+ `on --provider <id|名称>`；接管非默认 provider 自动同步 activeId（sidecar 按 activeId 路由）；拒绝路径零污染；中英 README 顶部显式告知"接管改写 providers.json 且关机后持久保留"根因与副本兜底 |
 | 2.4.0 | v5.1 | **深度审计 + 三方重试对照修复**：H1 无效 `--provider` 不再破坏既有接管（校验前置）；重试分级根治重试风暴（确定性错误快速失败、默认重试 2→1、客户端断开取消重试、Retry-After clamp 0–60s）；标准错误体（anthropic/openai 按路径）；M2 `ds` 子串误伤收紧为独立词元；M1 钩子意图一致（session-end 保留 enabled、session-start 尊重 off）；M3 keyMap 剪枝；M4 畸形路径 400；M5 端口精确匹配；L2 `env/default` 哨兵恢复；L3 `--provider` 缺值校验；测试 99→127 |
 | 2.4.1 | v5.1 | **端口边界精确化 + 守卫补测**：`isSelfProxyUrl`/`isProxiedUrl` 由子串匹配改 `:${port}(?![0-9])` 精确边界（根治 `:20329` 误伤 `:203290`，与 M5 同类）；补 M4 畸形路径守卫的端到端测试（守卫此前存在但无覆盖）；测试 127→135（新增 Phase M 八项） |
-| **2.4.2** | v5.1 | **并发/极端场景压力审查**：新增 `test_stress.js`（25 断言，端口 21340/21341/21342 隔离）覆盖主套件达不到的进程级并发与恶意状态变更——接管态 20 并发无串扰、10 轮 on/off 抖动收敛、8 进程并发 ctl 竞态、在途慢请求 vs 并发 off、接管中手改 providers.json（删本体/改 activeId）再 off、daemon 被杀→死状态检出→boot 恢复、并发切换无副本堆积、30 请求混合交织；生产 fresh off→on 端到端复验（真实上游、DSH 裁剪、We need 链、工具集收敛）。产品代码零改动 |
+| 2.4.2 | v5.1 | **并发/极端场景压力审查**：新增 `test_stress.js`（25 断言，端口 21340/21341/21342 隔离）覆盖主套件达不到的进程级并发与恶意状态变更——接管态 20 并发无串扰、10 轮 on/off 抖动收敛、8 进程并发 ctl 竞态、在途慢请求 vs 并发 off、接管中手改 providers.json（删本体/改 activeId）再 off、daemon 被杀→死状态检出→boot 恢复、并发切换无副本堆积、30 请求混合交织；生产 fresh off→on 端到端复验（真实上游、DSH 裁剪、We need 链、工具集收敛）。产品代码零改动 |
+| **2.4.3** | **v5.1 → v5.2** | **"We need" 实测不触发的两根因修复（16 组对照实验闭合因果链）**：缺口1——`thinkingBudget` 默认 `0` 使 `applyThinkingBudget` 成 no-op，判定轮发出"极简但无 thinking"形态（实验 P 组=❌），默认改 `8000` 并加 max_tokens clamp 守卫（宿主小 max_tokens 请求跳过注入防 400）；缺口2——user 消息中几十份 `<system-reminder>`（CLAUDE.md/memory/MCP/currentDate）压灭思维链（实验 F/G 组=❌），判定轮新增 `stripSystemReminders` 按标签剥离（Q 组证明是标签结构本身抑制而非文本量），整条剥空保留原文防空 content 400，非 text 块原样保留保协议完整；缺口3（tool_use/tool_result 历史块抑制前缀）接受为设计边界（删则孤儿 400，且推理质量未崩，"We need" 是可观测量非目标）。测试 135→144（新增 E10–E18） |
 
-> 两条编号线独立：文档中的 v5/v5.1 是**机制版本**（轮次感知 DSH 极简模拟算法的演进代号）；插件遵循 semver（`plugin.json`/CHANGELOG）。GitHub Releases 以 semver 为准。
+> 两条编号线独立：文档中的 v5/v5.1/v5.2 是**机制版本**（轮次感知 DSH 极简模拟算法的演进代号）；插件遵循 semver（`plugin.json`/CHANGELOG）。GitHub Releases 以 semver 为准。
 
 ---
 
@@ -424,9 +449,9 @@ DS + 其他(末条非 user 的异常结构):
 
 ```
 we-need-ds/
-├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.2/keywords)
+├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.3/keywords)
 ├── config.json                     # 运行时配置
-├── proxy.js                        # 代理网关 (分级重试/断开取消/标准错误体/DSH 塑形)
+├── proxy.js                        # 代理网关 (分级重试/断开取消/标准错误体/DSH 塑形+reminder 剥离+thinking 注入)
 ├── lib/state.js                    # 状态机 (接管/两段式释放/副本/锁/原子写/迁移)
 ├── lib/ctl.js                      # 命令行 (on/off/status/doctor/boot/restart/list)
 ├── hooks/hooks.json                # 钩子注册
@@ -436,14 +461,14 @@ we-need-ds/
 ├── skills/{we-need-ds,on,off,status,doctor,test,restart}/SKILL.md
 ├── commands/{plan,run}.md          # 斜杠指令 (CC 轨)
 ├── agents/we-need-planner.md       # 只读深度规划子代理
-├── test_full.js                    # 135 断言主套件 (Phase A-M)
+├── test_full.js                    # 144 断言主套件 (Phase A-M)
 ├── test_consume.js                 # 消费方视角测试
 ├── test_simulation.js              # 早期模拟测试
 ├── test_stress.js                  # 并发/极端场景压力审查 (25 断言)
-├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.2)
+├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.3 / 机制 v5.2)
 ├── CHANGELOG.md                    # 版本日志
 ├── LICENSE                         # MIT
 └── docs/alipay_qr.jpeg             # README 赞助二维码
 ```
 
-**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.2）。
+**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.3）。

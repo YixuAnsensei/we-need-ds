@@ -185,9 +185,45 @@ function collectUsedToolNames(messages) {
   return used;
 }
 
+const REMINDER_RE = /<system-reminder>[\s\S]*?<\/system-reminder>/g;
+
+function stripReminderText(text) {
+  if (typeof text !== 'string') return text;
+  return text.replace(REMINDER_RE, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function stripSystemReminders(body) {
+  if (!Array.isArray(body.messages)) return body;
+  for (const m of body.messages) {
+    if (!m || m.role !== 'user') continue;
+    if (typeof m.content === 'string') {
+      const stripped = stripReminderText(m.content);
+      if (stripped.length > 0) m.content = stripped;
+      continue;
+    }
+    if (Array.isArray(m.content)) {
+      const kept = [];
+      for (const c of m.content) {
+        if (c && c.type === 'text' && typeof c.text === 'string') {
+          const stripped = stripReminderText(c.text);
+          if (stripped.length > 0) kept.push({ ...c, text: stripped });
+        } else {
+          kept.push(c);
+        }
+      }
+      if (kept.length > 0) m.content = kept;
+    }
+  }
+  return body;
+}
+
 function applyThinkingBudget(body) {
   const budget = config.thinkingBudget;
   if (typeof budget === 'number' && budget > 0) {
+    const mt = body.max_tokens;
+    if (typeof mt === 'number' && mt > 0 && mt <= budget) {
+      return body;
+    }
     body.thinking = { type: 'enabled', budget_tokens: budget };
   }
   return body;
@@ -209,6 +245,7 @@ function processRequestBody(rawBody, reqUrl) {
         return rawBody;
       }
       if (shouldFilterTools(body)) {
+        stripSystemReminders(body);
         if (Array.isArray(body.tools) && body.tools.length > 0) {
           const coreSet = new Set((config.bootstrapCoreTools || []).map(t => t.toLowerCase()));
           const usedNames = collectUsedToolNames(body.messages);

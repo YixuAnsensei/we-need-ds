@@ -388,6 +388,47 @@ async function main() {
       proxyMod.config.thinkingBudget = prevBudget;
     }
 
+    const prevBudget2 = proxyMod.config.thinkingBudget;
+    proxyMod.config.thinkingBudget = 8000;
+    try {
+      const bigMax = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: 'design a cache' }], tools: bigTools, max_tokens: 32000 });
+      const outBig = JSON.parse(prbE(bigMax, '/v1/messages'));
+      check('E10 判定轮大max_tokens: 注入thinking budget 8000', !!outBig.thinking && outBig.thinking.budget_tokens === 8000);
+
+      const smallMax = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: 'title' }], tools: bigTools, max_tokens: 1024 });
+      const outSmall = JSON.parse(prbE(smallMax, '/v1/messages'));
+      check('E11 max_tokens守卫: 小max_tokens(1024<=8000)不注入thinking(防400)', outSmall.thinking === undefined);
+
+      const eqMax = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: 'x' }], tools: bigTools, max_tokens: 8000 });
+      const outEq = JSON.parse(prbE(eqMax, '/v1/messages'));
+      check('E12 max_tokens守卫边界: max_tokens==budget(8000)不注入(需严格大于)', outEq.thinking === undefined);
+
+      const remStr = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: '<system-reminder>CLAUDE.md stuff</system-reminder>\nreal question here' }], tools: bigTools });
+      const outRemStr = JSON.parse(prbE(remStr, '/v1/messages'));
+      check('E13 判定轮剥string型user消息里的system-reminder', outRemStr.messages[0].content === 'real question here' && !outRemStr.messages[0].content.includes('system-reminder'));
+
+      const remArr = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: [{ type: 'text', text: '<system-reminder>memory</system-reminder>actual task' }, { type: 'image', source: { data: 'x' } }] }], tools: bigTools });
+      const outRemArr = JSON.parse(prbE(remArr, '/v1/messages'));
+      check('E14 判定轮剥数组text块reminder且保留非text块(image)', outRemArr.messages[0].content[0].text === 'actual task' && outRemArr.messages[0].content[1].type === 'image');
+
+      const histRem = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: '<system-reminder>old noise</system-reminder>first ask' }, { role: 'assistant', content: 'reply' }, { role: 'user', content: '<system-reminder>new noise</system-reminder>second ask' }], tools: bigTools });
+      const outHist = JSON.parse(prbE(histRem, '/v1/messages'));
+      check('E15 历史user消息里的reminder同样被剥(实验待验证点→已剥)', outHist.messages[0].content === 'first ask' && outHist.messages[2].content === 'second ask');
+
+      const allRem = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: '<system-reminder>only noise</system-reminder>' }], tools: bigTools });
+      const outAll = JSON.parse(prbE(allRem, '/v1/messages'));
+      check('E16 全reminder消息剥空时保留原文(不产生空content 400)', outAll.messages[0].content.includes('only noise'));
+
+      const remToolHist = JSON.stringify({ model: 'deepseek-v4-pro', system: ccSystem, messages: [{ role: 'user', content: '<system-reminder>noise</system-reminder>go' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'out' }] }, { role: 'assistant', content: 'done' }, { role: 'user', content: '<system-reminder>warn</system-reminder>next question' }], tools: bigTools });
+      const outRT = JSON.parse(prbE(remToolHist, '/v1/messages'));
+      check('E17 reminder剥离不破坏tool_use/tool_result块(协议完整)', outRT.messages[1].content[0].type === 'tool_use' && outRT.messages[2].content[0].type === 'tool_result' && outRT.messages[4].content === 'next question');
+
+      const nonDsRem = JSON.stringify({ model: 'gpt-5', system: [{ type: 'text', text: 'You are Claude Code' }], messages: [{ role: 'user', content: '<system-reminder>noise</system-reminder>hi' }], tools: [{ name: 'Bash' }] });
+      check('E18 非DS模型带reminder仍字节级原样透传', prbE(nonDsRem, '/v1/messages') === nonDsRem);
+    } finally {
+      proxyMod.config.thinkingBudget = prevBudget2;
+    }
+
     const mixedTr = { model: 'deepseek-v4-pro', messages: [{ role: 'user', content: 't' }, { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'o' }, { type: 'text', text: '<system-reminder>warn</system-reminder>' }] }] };
     check('E4 M3: tool_result+文本混合仍判执行轮(不误砍进行中的工具链)', itf(mixedTr) === true);
 

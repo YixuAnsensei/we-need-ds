@@ -30,7 +30,7 @@
 
 ---
 
-## 💡 我们的解决方案：轮次结构感知动态解耦（Turn-Aware DSH Minimal Simulation, v5）
+## 💡 我们的解决方案：轮次结构感知动态解耦（Turn-Aware DSH Minimal Simulation, v5.2）
 
 **`we-need-ds`** 是专为 Claude Code 与 [cc-haha](https://github.com/NanmiCoder/cc-haha) 原生设计的全自动增强插件，**无需关闭任何 MCP，零感知唤醒满血 DeepSeek**：
 
@@ -47,7 +47,7 @@ sequenceDiagram
     CC->>Proxy: 判定轮请求 (新任务文本, 包含全部 30+ 个 MCP 工具 Schema)
     
     rect rgb(235, 248, 255)
-    Note over Proxy: v5 DSH 极简模拟（常态化，不限首轮）：<br/>命中 DS Pro 目标模型 + 判定轮 → 系统提示词替换为 DSH 官方单行<br/>工具裁切为 [Bash, Edit] 两件套 (对齐 DSH 极简模式)<br/>根据 API Key 自动反向路由到真实的对应上游
+    Note over Proxy: v5.2 DSH 极简模拟（常态化，不限首轮）：<br/>命中 DS Pro 目标模型 + 判定轮 → 系统提示词替换为 DSH 官方单行<br/>工具裁切为 [Bash, Edit] 两件套 (对齐 DSH 极简模式)<br/>剥离 user 消息中的 system-reminder 噪声 + 注入 thinking 预算<br/>根据 API Key 自动反向路由到真实的对应上游
     end
     
     Proxy->>Router: 转发极简后的纯净请求
@@ -73,9 +73,9 @@ sequenceDiagram
    * 接管的同时，为该服务商复制一份带 `· 直连副本` 后缀的临时 provider，其 `baseUrl` 指向**原始真实上游**——这就是逃生口：万一 daemon 死掉、本体指向死端口，你在 cc-haha 里切到副本即可立刻直连，再从容 `off`/`boot`/`on`；
    * 副本同时充当**冗余账本**：即使 `runtime-state.json` 丢失/损坏，也能从副本的 `baseUrl` 把本体救回真实上游；
    * 收到请求时根据 API Key / Token 动态回源到真实上游地址，多窗口、多标签页切换模型零干扰。
-2. **🎯 轮次结构感知极简模拟（Turn-Aware DSH Minimal, v5.1 全轮次人格统一）**：
+2. **🎯 轮次结构感知极简模拟（Turn-Aware DSH Minimal, v5.2 判定轮满血触发）**：
    * 纯请求结构判定：末条为新 user 文本 = **判定轮**（等待模型规划），末条为 tool/tool_result = **执行轮**（工具续跑）；
-   * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；
+   * **每个判定轮**（不限会话首轮）自动模拟 DeepSeek Harness 官方极简模式：系统提示词替换为 DSH 官方单行 `You are a helpful software engineer assistant.`，工具裁切为 `Bash + Edit` 两件套（映射 DSH 的 bash + str_replace_editor）；**v5.2 新增**：剥离 user 消息中的 `<system-reminder>` 噪声块（对照实验证明 reminder 噪声会压灭思维链），并在 Anthropic 路径注入 `thinking` 预算（对照实验证明 thinking 字段缺失即无法触发 "We need"）；
    * **每个执行轮（v5.1）**保留全量工具放行，同时人格也切换为 DSH 单行——客户端只校验 JSON 协议结构（tool_use/tool_result），人格文本不做硬校验，替换协议安全；执行链结束后下一次新任务重新进入极简，全程零配置。`executionDshPersona: false` 可退回 v5 行为（执行轮完全透传）。
 3. **🛡️ 多重防呆生命周期与无死锁保障**：
    * **宿主钩子自动接管**：SessionStart 钩子拉起 daemon 并**仅在账本 `enabled`（你此前执行过 `on` 且未 `off`）时**自动重接管；UserPromptSubmit 钩子每条新消息自检复活；SessionEnd 钩子会话结束把指向代理的 provider 还原直连但**保留拦截意图**（下个会话自动重接管）——想永久关闭请显式执行 `/we-need-ds:off`（在支持插件 hooks 的宿主上生效）；
@@ -210,7 +210,7 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true,
-  "thinkingBudget": 0,
+  "thinkingBudget": 8000,
   "upstreamRetries": 1,
   "upstreamRetryBackoffMs": 500,
   "upstreamHeaderTimeoutMs": 30000,
@@ -228,7 +228,7 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
 | `logDetails` | `false` | 设为 `true` 时在日志中记录每个透传请求的 URL 与上游（调试路由问题用）。 |
 | `idleAutoShutdownMinutes` | `0` | 空闲自动释放开关。默认 `0` = 常驻不退出；设为正数 N 则代理空闲超过 N 分钟后自动还原所有 Provider 并退出，下次新消息由 UserPromptSubmit 钩子自动拉起并重新接管。 |
 | `executionDshPersona` | `true` | 执行轮（工具续跑）是否也同步切换为 DSH 极简人格。默认 `true`（全程 DSH 人格，仅工具集不同）；设为 `false` 则执行轮完全原样透传（保留 Claude Code 原始人格）。 |
-| `thinkingBudget` | `0` | 判定轮是否附带 Anthropic extended thinking 预算。默认 `0` = 关闭（不注入任何 thinking 字段，依赖模型原生思维链）；设为正数 N 则在判定轮请求中注入 `thinking: {type:"enabled", budget_tokens:N}`，作为触发深度推理链的可选增强手段。 |
+| `thinkingBudget` | `8000` | 判定轮注入的 Anthropic extended thinking 预算。实测对照实验证明：`thinking` 字段**必须存在**才能触发 "We need" 思维链（budget 大小无所谓，但字段缺失即失败）。默认 `8000` = 判定轮在 Anthropic 路径注入 `thinking: {type:"enabled", budget_tokens:8000}`；设 `0` 关闭注入。内置 `max_tokens` 守卫：宿主小 `max_tokens` 请求（如标题生成，≤ budget）自动跳过注入，避免 `max_tokens > budget_tokens` 的 400。OpenAI 路径始终不注入（防中转站 400）。 |
 | `stripSystemPersona` | *(缺省=生效)* | 人格替换总开关。默认所有命中 DS 目标模型的请求都替换为 DSH 单行人格；显式设为 `false` 可完全关闭人格替换（仅保留工具裁切）。 |
 | `upstreamRetries` | `1` | 上游不稳定时的重试次数（不含首次，默认共 2 次尝试）。**只对可重试失败重试**：空 body、连接被重置、408/409/425/429、5xx、超时；确定性错误（DNS 解析失败 ENOTFOUND、主机不可达、非法 URL 等）**不重试直接失败**——这类错误重试只会叠加延迟。客户端断开后不再发起任何重试。代理刻意保守：上游本身可能已有重试，代理再叠多重试会放大成重试风暴。设为 `0` 关闭重试。 |
 | `upstreamRetryBackoffMs` | `500` | 重试退避基数（毫秒），按 2 的幂递增（500→1000→…），总封顶 60s；若上游返回 `Retry-After` 头则取两者较大值（`Retry-After` 被 clamp 到 0–60s，防恶意/异常头把代理挂死）。 |
@@ -241,7 +241,7 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
 ## ⚠️ 边界与注意事项
 
 1. **账本信任链**：插件把 provider 的 `baseUrl` 改写为代理地址时，会把"改写瞬间的 baseUrl"记为真实上游（`originalUrl`）。因此**请确保 cc-haha 里每个 provider 的 baseUrl 指向的是真实上游**（官方端点或你自己的中转，如 9router 的 `:20128`）。若你把某个 provider 手动配成了**另一个代理地址**，插件会把这个代理地址当作真实上游记录并还原——这是设计边界，不是 bug。开启拦截前用 `/we-need-ds:doctor` 核对各 provider 的原始上游是否符合预期。
-2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.4.x`）。两者独立编号：机制 v5.1 对应插件 2.x 系列。GitHub Releases 以 semver 为准。
+2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1 / v5.2** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.4.x`）。两者独立编号：机制 v5.2 对应插件 2.4.3。GitHub Releases 以 semver 为准。
 3. **端口占用**：代理默认绑定 `127.0.0.1:20329`。若被占用请改 `config.json` 的 `port`；插件在端口变更时会自动把指向旧端口的 provider 先还原再按新端口接管，不会把代理地址误记为真实上游。
 4. **测试隔离（跑测试套件必读）**：自测试套件会改写 providers.json 与 runtime-state.json。为避免污染你正在使用的生产环境，跑测试前务必设置三个隔离环境变量，让测试全程读写临时目录、绝不碰生产文件：`WE_NEED_DS_TEST_PORT`（测试端口）、`WE_NEED_DS_PROVIDERS_PATH`（临时 providers.json 路径）、`WE_NEED_DS_DATA_DIR`（临时数据目录）。`test_full.js` / `test_consume.js` 已内置自动隔离（用 `os.tmpdir()` 临时目录），直接 `node test_full.js` 即可；手动跑 `ctl on/off` 等接管命令时若不想碰生产，同样设这三个变量。
 

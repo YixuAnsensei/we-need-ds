@@ -3,6 +3,20 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.4.3 — 2026-09-08
+
+### Fixed (the two root causes of "We need" not firing in real use)
+A 16-group controlled study against the official endpoint (proxy bypassed) closed the causal chain: the "We need" prefix requires **all** of (1) one-line persona, (2) a `thinking` field present, (3) fewer than ~3 `<system-reminder>` blocks in the user turn. The previous build satisfied only (1), so real decision turns were the study's **P-group shape (minimal but no thinking) = ❌** and **F/G-group shape (dozens of reminders) = ❌**. Two fixes:
+- **Gap 1 — `thinking` was never injected.** `thinkingBudget` defaulted to `0`, making `applyThinkingBudget` a no-op, so the trimmed request was "minimal but thinking-less" — a shape that provably cannot fire the chain. Default `thinkingBudget` raised `0 → 8000` (both `loadConfig` and `config.json`), so every decision turn on the Anthropic path now carries `thinking: {type:"enabled", budget_tokens:8000}`. A `max_tokens` clamp guard was added: when the host sends a small `max_tokens` (≤ budget — e.g. title-generation, haiku-slot calls), injection is skipped to avoid Anthropic's `max_tokens > budget_tokens` 400. The OpenAI path remains exempt (transit-400 guard, unchanged). Tests E10–E12.
+- **Gap 2 — `<system-reminder>` noise was not stripped.** CLAUDE.md, memory, MCP instructions and currentDate all arrive as `<system-reminder>` blocks inside user content, dozens per turn — the study's F/G suppression. Decision turns now strip every `<system-reminder>…</system-reminder>` block from user messages (string and array-text forms, current *and* historical user turns), collapsing leftover blank lines. A message that is *entirely* reminders is left intact (an empty content block would 400). Non-text blocks (tool_result, image) are preserved untouched, so tool_use/tool_result pairing stays protocol-valid. Non-DS requests remain byte-for-byte passthrough. Tests E13–E18.
+- **Gap 3 (accepted as a design boundary):** `tool_use`/`tool_result` blocks in history suppress the literal prefix (study H-group) but cannot be removed without orphaning `tool_result` → API 400. Reasoning quality does not collapse (the model still analyzes seriously); "We need" is an observable, not the goal. Documented in the engineering report.
+
+### Docs
+- Mechanism version bumped **v5.1 → v5.2** (decision turn = DSH minimal + reminder-stripped + thinking-injected). `ctl.js` on/doctor/status banners updated. README (zh/en) `thinkingBudget` default and semantics rewritten; engineering report gained a "We need trigger condition chain" section and updated assertion counts.
+
+### Tests
+- New assertions E10–E18 (test_full, +9): thinking injection on large `max_tokens`, clamp guard on small/equal `max_tokens`, reminder stripping for string/array/historical/all-reminder/tool-history forms, non-DS passthrough with reminders. **144 assertions green** (was 135).
+
 ## v2.4.2 — 2026-09-08
 
 ### Added (concurrency & extreme-scenario stress regression)

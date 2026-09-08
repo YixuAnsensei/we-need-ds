@@ -29,7 +29,7 @@ Recent community research (pioneered by the DeepSeek Harness community) revealed
 
 ---
 
-## 💡 The Solution: Turn-Aware DSH Minimal Simulation (v5)
+## 💡 The Solution: Turn-Aware DSH Minimal Simulation (v5.2)
 
 **`we-need-ds`** provides a transparent, zero-latency proxy plugin that dynamically decouples tool exposure based on request structure:
 
@@ -46,7 +46,7 @@ sequenceDiagram
     CC->>Proxy: Decision Turn Request (new task text, carrying 30+ MCP tool schemas)
     
     rect rgb(235, 248, 255)
-    Note over Proxy: v5 DSH Minimal Simulation (every decision turn):<br/>Target model matched → System prompt replaced with official DSH one-liner<br/>Tools trimmed to [Bash, Edit] (mirrors DSH bash + str_replace_editor)<br/>Dynamically routes to original upstream based on API Key
+    Note over Proxy: v5.2 DSH Minimal Simulation (every decision turn):<br/>Target model matched → System prompt replaced with official DSH one-liner<br/>Tools trimmed to [Bash, Edit] (mirrors DSH bash + str_replace_editor)<br/>system-reminder noise stripped from user messages + thinking budget injected<br/>Dynamically routes to original upstream based on API Key
     end
     
     Proxy->>Router: Forward minimal request
@@ -72,9 +72,9 @@ sequenceDiagram
    * At hook time it also clones a temporary `· direct copy` provider whose `baseUrl` points at the **original real upstream** — that's your escape hatch: if the daemon ever dies and the body points at a dead port, switch to the copy in cc-haha and you're connected directly again, then run `off`/`boot`/`on` at leisure.
    * The copy doubles as a **redundant ledger**: even if `runtime-state.json` is lost or corrupted, the body's real upstream can be recovered from the copy's `baseUrl`.
    * Incoming requests are routed back to their real upstream dynamically by API Key / Token, so switching models across windows and tabs causes zero interference.
-2. **🎯 Turn-Aware DSH Minimal Simulation (v5.1, unified persona on all turns)**:
+2. **🎯 Turn-Aware DSH Minimal Simulation (v5.2, full-power trigger on decision turns)**:
    * Pure request-structure detection: last message is fresh user text = **decision turn** (model plans), last message is tool/tool_result = **execution turn** (tool follow-up);
-   * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor);
+   * **Every decision turn** (not just the first) simulates the official DeepSeek Harness minimal mode: system prompt replaced with the official DSH one-liner `You are a helpful software engineer assistant.`, tools trimmed to the `Bash + Edit` pair (mirroring DSH's bash + str_replace_editor); **new in v5.2**: `<system-reminder>` noise blocks are stripped from user messages (controlled experiments proved reminder noise suppresses the chain), and a `thinking` budget is injected on the Anthropic path (controlled experiments proved the chain cannot fire without the thinking field);
    * **Every execution turn (v5.1)** keeps full unrestricted tools while the persona is also switched to the DSH one-liner — the client only hard-validates JSON protocol structure (tool_use/tool_result blocks), never persona text, so the swap is protocol-safe; after an execution chain ends, the next new task re-enters minimal mode automatically. Set `executionDshPersona: false` to fall back to v5 behavior (execution turns fully untouched). Zero configuration.
 3. **🛡️ Triple Safety Lifecycle & Zero-Deadlock Guarantee**:
    * **Host hook auto-takeover**: SessionStart hook spawns the daemon and re-hooks **only when the ledger says `enabled`** (you ran `on` and never `off`); UserPromptSubmit hook self-checks and revives it on every new message; SessionEnd hook restores proxied providers to direct at session end but **keeps the interception intent** (next session auto-re-hooks) — to close permanently run `/we-need-ds:off` explicitly (effective on hosts that support plugin hooks).
@@ -180,7 +180,7 @@ In-session self-healing (the UserPromptSubmit hook: every new message checks the
   "logDetails": false,
   "idleAutoShutdownMinutes": 0,
   "executionDshPersona": true,
-  "thinkingBudget": 0,
+  "thinkingBudget": 8000,
   "upstreamRetries": 1,
   "upstreamRetryBackoffMs": 500,
   "upstreamHeaderTimeoutMs": 30000,
@@ -198,7 +198,7 @@ In-session self-healing (the UserPromptSubmit hook: every new message checks the
 | `logDetails` | `false` | When `true`, logs every passthrough request's URL and upstream (for routing debugging). |
 | `idleAutoShutdownMinutes` | `0` | Idle auto-release switch. Default `0` = daemon stays resident; set to N to auto-restore the hooked provider(s) to direct and exit after N idle minutes — the UserPromptSubmit hook revives it on your next message. |
 | `executionDshPersona` | `true` | Whether execution turns also switch to the DSH persona (default `true`; `false` restores v5 full passthrough on execution turns). |
-| `thinkingBudget` | `0` | Optional Anthropic extended-thinking budget on decision turns. Default `0` = off (no thinking field injected; relies on the model's native chain). A positive N injects `thinking: {type:"enabled", budget_tokens:N}` as an optional reinforcement for deep reasoning. |
+| `thinkingBudget` | `8000` | Anthropic extended-thinking budget injected on decision turns. Controlled experiments proved the `thinking` field **must be present** for the "We need" chain to fire (budget size is irrelevant, but a missing field fails). Default `8000` = injects `thinking: {type:"enabled", budget_tokens:8000}` on the Anthropic path; `0` disables injection. A built-in `max_tokens` clamp guard skips injection when the host sends a small `max_tokens` (≤ budget — e.g. title generation), avoiding Anthropic's `max_tokens > budget_tokens` 400. The OpenAI path is always exempt (transit-400 guard). |
 | `stripSystemPersona` | *(absent = on)* | Master persona-replacement switch. By default every DS-target request gets the DSH one-liner persona; set to `false` to disable persona replacement entirely (tool trimming still applies). |
 | `upstreamRetries` | `1` | Upstream retry count (excluding the first attempt, so 2 total tries by default). **Only retryable failures are retried**: empty body, connection reset, 408/409/425/429, 5xx, timeouts; deterministic errors (DNS ENOTFOUND, host unreachable, invalid URL, etc.) **fail fast without retry** — retrying them only adds latency. No retry once the client disconnects. The proxy stays deliberately conservative: the upstream may already retry on its own, and stacking more retries here amplifies into a retry storm. Set `0` to disable. |
 | `upstreamRetryBackoffMs` | `500` | Retry backoff base in ms, doubling per attempt (500→1000→…), capped at 60s total; when the upstream sends a `Retry-After` header the larger of the two wins (the header is clamped to 0–60s so a malicious/absurd value can't wedge the proxy). |
@@ -211,7 +211,7 @@ In-session self-healing (the UserPromptSubmit hook: every new message checks the
 ## ⚠️ Boundaries & Notes
 
 1. **Ledger trust chain**: when the plugin rewrites a provider's `baseUrl` to the proxy address, it records the baseUrl *at the moment of rewriting* as the real upstream (`originalUrl`). So **make sure every provider's baseUrl in cc-haha points to a real upstream** (official endpoint or your own relay, e.g. 9router on `:20128`). If you manually configure a provider to point at *another proxy*, the plugin will record that proxy address as the real upstream and restore to it — this is a design boundary, not a bug. Run `/we-need-ds:doctor` before enabling interception to verify each provider's original upstream.
-2. **Two version lines**: **v5 / v5.1** throughout the docs refers to the **mechanism version** (the turn-aware DSH minimal simulation algorithm's evolution codename); the plugin itself follows **semver** (see `plugin.json` and CHANGELOG, currently `2.4.x`). They are numbered independently: mechanism v5.1 ships in the plugin 2.x series. GitHub Releases use semver.
+2. **Two version lines**: **v5 / v5.1 / v5.2** throughout the docs refers to the **mechanism version** (the turn-aware DSH minimal simulation algorithm's evolution codename); the plugin itself follows **semver** (see `plugin.json` and CHANGELOG, currently `2.4.x`). They are numbered independently: mechanism v5.2 ships in plugin 2.4.3. GitHub Releases use semver.
 3. **Port occupancy**: the proxy binds `127.0.0.1:20329` by default. If occupied, change `port` in `config.json`; on a port change the plugin first restores providers pointing at the old port, then re-hooks them on the new port — the proxy address is never recorded as a real upstream.
 4. **Test isolation (read before running the suites)**: the self-test suites rewrite providers.json and runtime-state.json. To avoid polluting your live environment, set three isolation env vars so tests read/write a temp dir and never touch production files: `WE_NEED_DS_TEST_PORT` (test port), `WE_NEED_DS_PROVIDERS_PATH` (temp providers.json path), `WE_NEED_DS_DATA_DIR` (temp data dir). `test_full.js` / `test_consume.js` have this isolation built in (via `os.tmpdir()`), so `node test_full.js` is safe as-is; when manually running takeover commands like `ctl on/off` without touching production, set the same three vars.
 
