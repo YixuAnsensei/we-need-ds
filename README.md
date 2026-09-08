@@ -241,9 +241,10 @@ Windows 关机/重启会**直接杀死 daemon 进程**，且绕过所有会话�
 ## ⚠️ 边界与注意事项
 
 1. **账本信任链**：插件把 provider 的 `baseUrl` 改写为代理地址时，会把"改写瞬间的 baseUrl"记为真实上游（`originalUrl`）。因此**请确保 cc-haha 里每个 provider 的 baseUrl 指向的是真实上游**（官方端点或你自己的中转，如 9router 的 `:20128`）。若你把某个 provider 手动配成了**另一个代理地址**，插件会把这个代理地址当作真实上游记录并还原——这是设计边界，不是 bug。开启拦截前用 `/we-need-ds:doctor` 核对各 provider 的原始上游是否符合预期。
-2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1 / v5.2** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.4.x`）。两者独立编号：机制 v5.2 对应插件 2.4.3。GitHub Releases 以 semver 为准。
+2. **两条版本编号线**：README 与文档中反复出现的 **v5 / v5.1 / v5.2** 指的是**机制版本**（轮次感知 DSH 极简模拟这套算法的演进代号）；插件本身遵循 **semver**（见 `plugin.json` 与 CHANGELOG，当前 `2.4.x`）。两者独立编号：机制 v5.2 对应插件 2.4.4。GitHub Releases 以 semver 为准。
 3. **端口占用**：代理默认绑定 `127.0.0.1:20329`。若被占用请改 `config.json` 的 `port`；插件在端口变更时会自动把指向旧端口的 provider 先还原再按新端口接管，不会把代理地址误记为真实上游。
 4. **测试隔离（跑测试套件必读）**：自测试套件会改写 providers.json 与 runtime-state.json。为避免污染你正在使用的生产环境，跑测试前务必设置三个隔离环境变量，让测试全程读写临时目录、绝不碰生产文件：`WE_NEED_DS_TEST_PORT`（测试端口）、`WE_NEED_DS_PROVIDERS_PATH`（临时 providers.json 路径）、`WE_NEED_DS_DATA_DIR`（临时数据目录）。`test_full.js` / `test_consume.js` 已内置自动隔离（用 `os.tmpdir()` 临时目录），直接 `node test_full.js` 即可；手动跑 `ctl on/off` 等接管命令时若不想碰生产，同样设这三个变量。
+5. **接管态路由与漂移可观测（v2.4.4）**：接管态下（账本 `providers` 非空）代理按 API Key 精确回源——**若请求携带的 key 未在 `keyMap` 命中，代理直接返回 502 显式失败，绝不静默把请求错发到 `defaultUpstream`**（防止你改了被接管 provider 的 key 后请求被带新 key 误发到 DeepSeek 官方、只看到一个费解的 401）；无 key 请求与纯 Claude Code 模式（`providers` 为空）仍按 `defaultUpstream`/环境变量兜底。由于 cc-haha 的 sidecar 不执行插件 hooks，如果你**编辑/重建了被接管的 provider（id 漂移）或新增了 DS 服务商并设为默认**，接管会悬空、"We need" 静默失效——`doctor` 会检出并打印**接管漂移告警**及恢复命令（重新执行 `on`）。`boot`/`restart` 清理残留 daemon 时也已加防护：只杀确认是本插件（`/health-check` 应答 ok，或无应答但进程映像为 `node.exe`）的进程，端口被无关程序占用时跳过/中止而非误杀。
 
 ---
 

@@ -127,7 +127,7 @@ function realOf(d) { return d.providers.filter(p => !state.isCopyProvider(p)); }
 
   try {
     console.log('\n=== S4 在途慢请求 vs 并发 off（互不阻塞） ===');
-    writeFixture([baseProv('pa', 'DS-A', KEY_A, `http://127.0.0.1:${UA}`), baseProv('pb', 'DS-B', KEY_B, `http://127.0.0.1:${UB}`)], 'pa');
+    writeFixture([baseProv('pa', 'DS-A', KEY_A, `http://127.0.0.1:${UA}`), baseProv('pb', 'DS-B', KEY_B, `http://127.0.0.1:${UB}`)], 'pb');
     state.enableInterception(cfg);
     await waitProxy();
     const slowP = post(PORT, '/v1/messages', msgBody('deepseek-v4-pro'), { 'x-api-key': KEY_B });

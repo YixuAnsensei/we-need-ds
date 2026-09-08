@@ -280,6 +280,41 @@ async function main() {
     const badRes = await post('/ctl', JSON.stringify({ action: 'bogus' }));
     check('A34 /ctl 未知动作 400', badRes.status === 400);
 
+    console.log('--- A35-A37 D2 接管态路由 fail-safe ---');
+    state.writeState({
+      enabled: true,
+      providers: { 'd2-prov': { name: 'D2', originalUrl: 'http://127.0.0.1:2099', apiKey: 'sk-test-key-a' } },
+      keyMap: {
+        'sk-test-key-a': 'http://127.0.0.1:2099',
+        'sk-test-key-b': 'http://127.0.0.1:2100',
+        'sk-loop': 'http://127.0.0.1:21329'
+      },
+      defaultUpstream: 'http://127.0.0.1:2099'
+    });
+    const unknownKeyRes = await post('/v1/messages', openAINoSystem, { authorization: 'Bearer sk-d2-unknown' });
+    check('A35 接管态未知 key → 502 拒绝错发(不落 defaultUpstream)', unknownKeyRes.status === 502 && unknownKeyRes.body.includes('无法确定'));
+    await post('/v1/messages', openAINoSystem, { authorization: 'Bearer sk-test-key-a' });
+    check('A36 接管态已知 key 仍正常路由', lastHit().tag === 'main');
+    await post('/v1/messages', openAINoSystem);
+    check('A37 接管态无 key 仍走 defaultUpstream 兜底', lastHit().tag === 'main');
+    state.writeState({
+      enabled: true,
+      providers: {},
+      keyMap: {
+        'sk-test-key-a': 'http://127.0.0.1:2099',
+        'sk-test-key-b': 'http://127.0.0.1:2100',
+        'sk-loop': 'http://127.0.0.1:21329'
+      },
+      defaultUpstream: 'http://127.0.0.1:2099'
+    });
+
+    console.log('--- A38-A40 D6 killDaemonOnPort 契约 ---');
+    const d6idle = await state.killDaemonOnPort(21399);
+    check('A38 空闲端口 → 无可杀目标不报错', d6idle.killed === false && d6idle.foreign === false);
+    const d6kill = await state.killDaemonOnPort(21329);
+    check('A39 自家 daemon(health-check通) 正常识别并杀掉', d6kill.killed === true && d6kill.foreign === false && d6kill.released === true);
+    check('A40 杀掉后端口释放', !(await state.isProxyRunning(21329)));
+
     killDaemon();
 
     console.log('===== Phase B: 空闲自毁生命周期 =====');

@@ -3,6 +3,20 @@
 All notable changes to **we-need-ds** are documented here.
 本插件的所有重要变更记录于此。
 
+## v2.4.4 — 2026-09-08
+
+### Fixed (audit findings D1/D2/D6)
+- **D2 — the `defaultUpstream` fallback could misroute a request when the intercepted provider's key is unknown.** On the cc-haha interception path the ledger records `defaultUpstream = <the intercepted provider's real upstream>`. The resolver order was `keyMap[key] → defaultUpstream → env → 502`, so if the user edited a hooked provider to a *different* key (e.g. switched to a relay key not in `keyMap`), the request silently fell through to `defaultUpstream` — sending the new key to DeepSeek official and surfacing a confusing 401, instead of failing explicitly. **Now: when the ledger has an active interception (providers non-empty) and the request carries a non-empty key that misses `keyMap`, the proxy refuses and returns 502 rather than guessing an upstream** — honoring design rule "explicit 502 beats silent misroute". Requests with no key (pure Claude Code mode) and the un-intercepted state still fall through to `defaultUpstream`/env unchanged. Test A35–A37.
+- **D6 — `killDaemonOnPort` no longer risks killing an unrelated process.** Previously any PID listening on the configured port was `taskkill`-ed during boot/restart cleanup. Now it first probes `/health-check`: a live ok-response confirms our own daemon and it is killed; otherwise the process image is checked and only `node.exe` is treated as an orphaned daemon — a foreign non-node listener is reported (`foreign: true`) and left alive. `boot` skips such cleanup with a notice; `restart` aborts with a clear message instead of killing someone else's server. Tests A38–A40.
+- **D1 — `doctor` now detects an interception that has silently gone stale.** Because cc-haha's sidecar does not run our hooks, editing/recreating the hooked provider (id drift) or switching to a newly-added DS provider leaves the ledger pointing at a provider that is no longer proxied — "We need" quietly stops applying and the user thinks the plugin broke. `doctor` now cross-checks the ledger against live `providers.json` and, if the recorded hooked provider vanished or no longer points at the proxy port (or nothing points at the proxy at all while enabled), prints an explicit **接管漂移告警** with the reason and the `on` recovery command. Pure output; no behavior change.
+
+### Docs
+- README (zh/en) design-boundary section gained a note on D2 fail-safe tightening and D6/D1 diagnostics.
+
+### Tests
+- New assertions A35–A40 (test_full, +6): D2 intercepted-state unknown-key → 502 / known-key still routes / no-key still falls back; D6 idle-port no-op / own-daemon killed+released. test_full now **150 assertions green** (was 144).
+- test_stress S4 fixture corrected to drive the intercepted provider's own key (the old fixture passed only via the D2 misroute path the fix removes) — stress suite **全部通过**.
+
 ## v2.4.3 — 2026-09-08
 
 ### Fixed (the two root causes of "We need" not firing in real use)

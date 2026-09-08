@@ -21,6 +21,11 @@ function resolveTargetBaseUrl(req) {
     return st.keyMap[token];
   }
 
+  if (token && st && st.providers && Object.keys(st.providers).length > 0) {
+    state.log(`resolve blocked: key 未命中 keyMap 且处于接管态，拒绝 defaultUpstream 兜底以避免错发`);
+    return null;
+  }
+
   if (st && st.defaultUpstream && st.defaultUpstream !== 'env/default' && !isSelfProxyUrl(st.defaultUpstream)) {
     return st.defaultUpstream;
   }

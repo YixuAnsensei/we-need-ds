@@ -1,6 +1,6 @@
 # we-need-ds 插件工程开发报告
 
-> 文档版本：对应插件 semver `2.4.3` / 机制版本 `v5.2`
+> 文档版本：对应插件 semver `2.4.4` / 机制版本 `v5.2`
 > 撰写日期：2026-09-08
 > 文档性质：完整工程实现说明。面向接手/评审的工程师与智能体，实事求是描述"实现了什么、如何实现、为什么这样设计、遇到过什么问题、当前边界在哪"，不包含开发方向上的倾向性建议。
 
@@ -101,7 +101,7 @@ v2.4.3 前用户实测仍无法触发思维链，遂做三轮共 16 组对照实
 | 宿主钩子 | `hooks/*.js` + `hooks/hooks.json` | SessionStart / UserPromptSubmit / SessionEnd 三钩子（仅支持 hooks 的宿主生效） |
 | 技能入口 | `skills/*/SKILL.md` | `/we-need-ds`、`:on`、`:off`、`:status`、`:doctor`、`:test`、`:restart` |
 | 子代理 | `agents/we-need-planner.md` | `/we-need-ds:plan` 只读深度规划器 |
-| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js`、`test_stress.js` | 144 项断言主套件 + 25 项并发压力审查等 |
+| 测试 | `test_full.js`、`test_consume.js`、`test_simulation.js`、`test_stress.js` | 150 项断言主套件 + 25 项并发压力审查等 |
 
 ### 2.3 数据文件布局
 
@@ -371,7 +371,7 @@ DS + 其他(末条非 user 的异常结构):
 
 ## 7. 测试体系
 
-`test_full.js` 共 **144 项断言**，全程隔离（端口 21329/21330/21331/21332、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
+`test_full.js` 共 **150 项断言**，全程隔离（端口 21329/21330/21331/21332、`os.tmpdir()` 临时 providers/state、config 备份恢复），当前全部通过。分阶段覆盖：
 
 | Phase | 覆盖 |
 | :--- | :--- |
@@ -440,6 +440,7 @@ DS + 其他(末条非 user 的异常结构):
 | 2.4.1 | v5.1 | **端口边界精确化 + 守卫补测**：`isSelfProxyUrl`/`isProxiedUrl` 由子串匹配改 `:${port}(?![0-9])` 精确边界（根治 `:20329` 误伤 `:203290`，与 M5 同类）；补 M4 畸形路径守卫的端到端测试（守卫此前存在但无覆盖）；测试 127→135（新增 Phase M 八项） |
 | 2.4.2 | v5.1 | **并发/极端场景压力审查**：新增 `test_stress.js`（25 断言，端口 21340/21341/21342 隔离）覆盖主套件达不到的进程级并发与恶意状态变更——接管态 20 并发无串扰、10 轮 on/off 抖动收敛、8 进程并发 ctl 竞态、在途慢请求 vs 并发 off、接管中手改 providers.json（删本体/改 activeId）再 off、daemon 被杀→死状态检出→boot 恢复、并发切换无副本堆积、30 请求混合交织；生产 fresh off→on 端到端复验（真实上游、DSH 裁剪、We need 链、工具集收敛）。产品代码零改动 |
 | **2.4.3** | **v5.1 → v5.2** | **"We need" 实测不触发的两根因修复（16 组对照实验闭合因果链）**：缺口1——`thinkingBudget` 默认 `0` 使 `applyThinkingBudget` 成 no-op，判定轮发出"极简但无 thinking"形态（实验 P 组=❌），默认改 `8000` 并加 max_tokens clamp 守卫（宿主小 max_tokens 请求跳过注入防 400）；缺口2——user 消息中几十份 `<system-reminder>`（CLAUDE.md/memory/MCP/currentDate）压灭思维链（实验 F/G 组=❌），判定轮新增 `stripSystemReminders` 按标签剥离（Q 组证明是标签结构本身抑制而非文本量），整条剥空保留原文防空 content 400，非 text 块原样保留保协议完整；缺口3（tool_use/tool_result 历史块抑制前缀）接受为设计边界（删则孤儿 400，且推理质量未崩，"We need" 是可观测量非目标）。测试 135→144（新增 E10–E18） |
+| **2.4.4** | v5.2 | **深度审计三项修复（D2 fail-safe 破口 + D6 误杀防护 + D1 漂移可观测）**：D2——接管态下 `resolveTargetBaseUrl` 曾无条件走 `defaultUpstream` 兜底，被接管 provider 换了 key（keyMap 未命中）时请求带新 key 静默错发到原始上游（→401，违背"502 显式失败优于静默错发"）；现改为接管态（providers 账本非空）+ 请求携带非空 key 且 keyMap 未命中 → 直接 null 走 502，纯 CC 模式（providers 空）与无 key 请求兜底语义不变；D6——`killDaemonOnPort` 由"端口有 PID 就 taskkill"加双闸门（先 `/health-check` 确认自家 daemon 才杀，无应答则进程映像须为 node.exe，否则返回 foreign 不杀），boot 跳过无关进程清理、restart 遇 foreign 明确中止而非误杀他人 server；D1——doctor 新增接管漂移告警（账本 enabled 但记录的本体已从池中消失/其 baseUrl 不再指向代理/无任何 provider 指向代理 → 醒目提示"裁剪静默失效"并给恢复命令，纯输出零行为改动）。test_stress S4 夹具修正（旧夹具用 pb 的 key 走 pa 上游，正是 D2 错发路径的假绿，改用被接管 provider 自身 key）。测试 144→150（新增 A35–A40） |
 
 > 两条编号线独立：文档中的 v5/v5.1/v5.2 是**机制版本**（轮次感知 DSH 极简模拟算法的演进代号）；插件遵循 semver（`plugin.json`/CHANGELOG）。GitHub Releases 以 semver 为准。
 
@@ -449,7 +450,7 @@ DS + 其他(末条非 user 的异常结构):
 
 ```
 we-need-ds/
-├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.3/keywords)
+├── .claude-plugin/plugin.json      # 插件元数据 (name/version=2.4.4/keywords)
 ├── config.json                     # 运行时配置
 ├── proxy.js                        # 代理网关 (分级重试/断开取消/标准错误体/DSH 塑形+reminder 剥离+thinking 注入)
 ├── lib/state.js                    # 状态机 (接管/两段式释放/副本/锁/原子写/迁移)
@@ -461,14 +462,14 @@ we-need-ds/
 ├── skills/{we-need-ds,on,off,status,doctor,test,restart}/SKILL.md
 ├── commands/{plan,run}.md          # 斜杠指令 (CC 轨)
 ├── agents/we-need-planner.md       # 只读深度规划子代理
-├── test_full.js                    # 144 断言主套件 (Phase A-M)
+├── test_full.js                    # 150 断言主套件 (Phase A-M)
 ├── test_consume.js                 # 消费方视角测试
 ├── test_simulation.js              # 早期模拟测试
 ├── test_stress.js                  # 并发/极端场景压力审查 (25 断言)
-├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.3 / 机制 v5.2)
+├── README.md / README_EN.md        # 中英使用文档 (已对齐 v2.4.4 / 机制 v5.2)
 ├── CHANGELOG.md                    # 版本日志
 ├── LICENSE                         # MIT
 └── docs/alipay_qr.jpeg             # README 赞助二维码
 ```
 
-**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.3）。
+**仓库**：`https://github.com/YixuAnsensei/we-need-ds`（main 分支，v2.4.4）。
